@@ -1,0 +1,942 @@
+﻿// Roadmap.jsx
+
+import { useEffect, useRef, useState } from "react";
+import { useParams, useLocation, useNavigate, Navigate } from "react-router-dom";
+import { db } from "../../firebase";
+import { apiUrl } from "../../services/api";
+import { collection, getDocs, doc, getDoc, updateDoc, deleteField } from "firebase/firestore";
+import axios from "axios";
+import FresherShellLayout from "./FresherShellLayout";
+import { getCompanyLicensePlan } from "../../services/companyLicense";
+import CompanyPageLoader from "../CompanySpecific/CompanyPageLoader";
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const sortRoadmapModules = (modules) =>
+  (Array.isArray(modules) ? modules : [])
+    .map((module, idx) => ({ module, idx }))
+    .sort((a, b) => {
+      const aOrder = Number(a.module?.order);
+      const bOrder = Number(b.module?.order);
+      const aHasOrder = Number.isFinite(aOrder);
+      const bHasOrder = Number.isFinite(bOrder);
+
+      if (aHasOrder && bHasOrder && aOrder !== bOrder) return aOrder - bOrder;
+      if (aHasOrder && !bHasOrder) return -1;
+      if (!aHasOrder && bHasOrder) return 1;
+      return a.idx - b.idx;
+    })
+    .map(({ module }) => module);
+
+export default function Roadmap() {
+  const BASE_MAX_QUIZ_ATTEMPTS = 3;
+  const DEFAULT_QUIZ_UNLOCK_PERCENT = 70;
+  const { companyId, deptId, userId,companyName } = useParams();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const [roadmap, setRoadmap] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [loadingModuleId, setLoadingModuleId] = useState(null);
+  const [roadmapGeneratedAt, setRoadmapGeneratedAt] = useState(null);
+  const [userData, setUserData] = useState(null);
+  const [licensePlan, setLicensePlan] = useState("License Basic");
+  const [cvValidationWarning, setCvValidationWarning] = useState(null);
+  const [roadmapGenerationPending, setRoadmapGenerationPending] = useState(false);
+  const generationRequestedRef = useRef(false);
+  const isBasicPlan = licensePlan === "License Basic";
+
+const isModuleLocked = (module) => {
+  const status = String(module?.status || "").toLowerCase();
+  return status === "locked" || !!module?.locked || !!module?.moduleLocked || !!module?.quizLocked;
+};
+
+const isModuleEffectivelyCompleted = (module) => {
+  const status = String(module?.status || "").toLowerCase();
+  if (status === "expired" || isModuleLocked(module)) return false;
+  return status === "completed" || !!module?.completed || !!module?.quizPassed;
+};
+
+const getModuleDisplayStatus = (module) => {
+  const status = String(module?.status || "").toLowerCase();
+  if (status === "expired" || module?.moduleExpired) return "⏰ EXPIRED";
+  if (isModuleLocked(module)) return "In Progress";
+  if (isModuleEffectivelyCompleted(module)) return "✓ Completed";
+  return "In Progress";
+};
+
+const isBasicModuleWindowElapsed = (module) => {
+  if (!module || isModuleEffectivelyCompleted(module)) return false;
+
+  const startRaw = module.startedAt || module.FirstTimeCreatedAt || module.createdAt;
+  if (!startRaw) return false;
+
+  const startDate = startRaw.toDate ? startRaw.toDate() : new Date(startRaw);
+  if (!(startDate instanceof Date) || Number.isNaN(startDate.getTime())) return false;
+
+  const totalDays = Number(module.estimatedDays) || 1;
+  const deadline = new Date(startDate.getTime() + totalDays * 24 * 60 * 60 * 1000);
+
+  return Date.now() >= deadline.getTime();
+};
+
+const applyBasicPlanAutoProgress = async (modules) => {
+  if (!isBasicPlan || !Array.isArray(modules) || modules.length === 0) return;
+
+  const updates = [];
+  const sortedModules = sortRoadmapModules(modules);
+
+  for (const module of sortedModules) {
+    if (!module?.id) continue;
+
+    if (!isModuleEffectivelyCompleted(module) && isBasicModuleWindowElapsed(module)) {
+      const moduleRef = doc(
+        db,
+        "freshers",
+        companyId,
+        "departments",
+        deptId,
+        "users",
+        userId,
+        "roadmap",
+        module.id
+      );
+
+      updates.push(
+        updateDoc(moduleRef, {
+          completed: true,
+          status: "completed",
+          completedAt: new Date(),
+          moduleLocked: false,
+          quizLocked: false,
+          requiresAdminContact: false,
+        })
+      );
+    }
+  }
+
+  const nextModule = sortedModules.find((module) => !isModuleEffectivelyCompleted(module));
+  if (nextModule?.id && nextModule.status !== "in-progress") {
+    const nextModuleRef = doc(
+      db,
+      "freshers",
+      companyId,
+      "departments",
+      deptId,
+      "users",
+      userId,
+      "roadmap",
+      nextModule.id
+    );
+
+    updates.push(
+      updateDoc(nextModuleRef, {
+        status: "in-progress",
+        moduleLocked: false,
+        quizLocked: false,
+        requiresAdminContact: false,
+      })
+    );
+  }
+
+  const userRef = doc(db, "freshers", companyId, "departments", deptId, "users", userId);
+  updates.push(
+    updateDoc(userRef, {
+      trainingLocked: false,
+      requiresAdminContact: false,
+      trainingLockedAt: deleteField(),
+      trainingLockedReason: deleteField(),
+    })
+  );
+
+  await Promise.all(updates);
+};
+
+const getModuleStartDate = (module) => {
+  // Prioritize actual start time when module was unlocked/started
+  if (module.startedAt) {
+    return module.startedAt.toDate ? module.startedAt.toDate() : new Date(module.startedAt);
+  }
+
+  const fallbackBase = module.FirstTimeCreatedAt || module.createdAt;
+  const fallbackDate = fallbackBase
+    ? (fallbackBase.toDate ? fallbackBase.toDate() : new Date(fallbackBase))
+    : null;
+
+  if (!roadmapGeneratedAt || !roadmap.length || !module.order) return fallbackDate;
+
+  const daysOffset = roadmap
+    .filter((m) => (m.order || 0) < (module.order || 0))
+    .reduce((sum, m) => sum + (m.estimatedDays || 1), 0);
+
+  return new Date(roadmapGeneratedAt.getTime() + daysOffset * 24 * 60 * 60 * 1000);
+};
+
+  const checkQuizTimeUnlock = (module) => {
+    if (isBasicPlan) {
+      return {
+        isUnlocked: true,
+        remainingTime: null,
+        message: "Quiz workflow is disabled for basic plan.",
+      };
+    }
+
+    const startDate = getModuleStartDate(module);
+    const estimatedDays = Number(module?.estimatedDays) || 1;
+    const configuredUnlockPercent = Number(userData?.quizPolicy?.quizUnlockPercent);
+    const unlockPercent = Number.isFinite(configuredUnlockPercent)
+      ? Math.max(DEFAULT_QUIZ_UNLOCK_PERCENT, configuredUnlockPercent)
+      : DEFAULT_QUIZ_UNLOCK_PERCENT;
+
+    if (!startDate) {
+      return {
+        isUnlocked: false,
+        remainingTime: "Module not started yet",
+        message: "Please start the module before attempting the quiz.",
+      };
+    }
+
+    const unlockDelayMs = estimatedDays * (unlockPercent / 100) * 24 * 60 * 60 * 1000;
+    const unlockAt = startDate.getTime() + unlockDelayMs;
+    const now = Date.now();
+
+    if (now >= unlockAt) {
+      return {
+        isUnlocked: true,
+        remainingTime: null,
+        message: "Quiz is now available!",
+      };
+    }
+
+    const remainingMs = unlockAt - now;
+    const remainingDays = Math.floor(remainingMs / (1000 * 60 * 60 * 24));
+    const remainingHours = Math.floor((remainingMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+    const remainingMinutes = Math.floor((remainingMs % (1000 * 60 * 60)) / (1000 * 60));
+
+    let remainingTimeStr = "";
+    if (remainingDays > 0) {
+      remainingTimeStr = `${remainingDays} day${remainingDays > 1 ? "s" : ""} and ${remainingHours} hour${remainingHours !== 1 ? "s" : ""}`;
+    } else if (remainingHours > 0) {
+      remainingTimeStr = `${remainingHours} hour${remainingHours !== 1 ? "s" : ""} and ${remainingMinutes} minute${remainingMinutes !== 1 ? "s" : ""}`;
+    } else {
+      remainingTimeStr = `${remainingMinutes} minute${remainingMinutes !== 1 ? "s" : ""}`;
+    }
+
+    return {
+      isUnlocked: false,
+      remainingTime: remainingTimeStr,
+      message: `Quiz will be available after you've spent ${unlockPercent}% of the module time. Unlock in: ${remainingTimeStr}`,
+    };
+  };
+
+  // Update overall progress after marking module done
+  const updateProgress = async () => {
+    try {
+      const roadmapRef = collection(
+        db,
+        "freshers",
+        companyId,
+        "departments",
+        deptId,
+        "users",
+        userId,
+        "roadmap"
+      );
+      const roadmapSnap = await getDocs(roadmapRef);
+      const modules = roadmapSnap.docs.map((doc) => doc.data());
+
+      const totalModules = modules.length;
+      const completedModules = modules.filter((m) => isModuleEffectivelyCompleted(m)).length;
+      const progressPercent = Math.round((completedModules / totalModules) * 100);
+
+      const userRef = doc(db, "freshers", companyId, "departments", deptId, "users", userId);
+      const payload = { progress: progressPercent };
+      if (progressPercent === 100) payload.trainingStatus = "completed";
+      await updateDoc(userRef, payload);
+
+      return progressPercent;
+    } catch (err) {
+      console.error("❌ Error updating progress:", err);
+      return 0;
+    }
+  };
+
+  useEffect(() => {
+    if (!companyId || !deptId || !userId) return;
+
+    const loadRoadmap = async () => {
+      try {
+        // Fetch company license plan
+        const planType = await getCompanyLicensePlan(companyId);
+        setLicensePlan(planType);
+
+        const userRef = doc(db, "freshers", companyId, "departments", deptId, "users", userId);
+        const userSnap = await getDoc(userRef);
+        if (userSnap.exists()) {
+          const userData = userSnap.data();
+          setUserData(userData); // Store userData for training lock check
+          const generatedAt = userData.roadmapAgentic?.generatedAt || userData.roadmapGeneratedAt;
+          if (generatedAt) {
+            setRoadmapGeneratedAt(generatedAt.toDate ? generatedAt.toDate() : new Date(generatedAt));
+          }
+        }
+
+        const roadmapRef = collection(
+          db,
+          "freshers",
+          companyId,
+          "departments",
+          deptId,
+          "users",
+          userId,
+          "roadmap"
+        );
+
+        let roadmapSnap = await getDocs(roadmapRef);
+
+        if (roadmapSnap.empty) {
+          if (!generationRequestedRef.current) {
+            generationRequestedRef.current = true;
+
+            if (!userSnap.exists()) throw new Error("Fresher not found");
+
+            const userData = userSnap.data();
+            const expertiseScore = userData.onboarding?.expertise ?? 1;
+            const expertiseLevel = userData.onboarding?.level ?? "Beginner";
+            const trainingOn = userData.trainingOn ?? "General";
+            const trainingDuration = userData.trainingDuration;
+
+            setRoadmapGenerationPending(true);
+            try {
+              await axios.post(apiUrl("/api/roadmap/generate"), {
+                companyId,
+                deptId,
+                userId,
+                trainingDuration,
+                expertiseScore,
+                expertiseLevel,
+                trainingOn,
+              });
+            } catch (err) {
+              const isAlreadyGenerating = err?.response?.status === 409;
+              if (!isAlreadyGenerating) {
+                throw err;
+              }
+            }
+
+            setCvValidationWarning(null);
+          }
+
+          setRoadmapGenerationPending(true);
+
+          const maxPollAttempts = 20;
+          for (let attempt = 0; attempt < maxPollAttempts; attempt += 1) {
+            roadmapSnap = await getDocs(roadmapRef);
+            if (!roadmapSnap.empty) break;
+            await sleep(1500);
+          }
+
+          if (roadmapSnap.empty) {
+            setLoading(false);
+            return;
+          }
+        }
+  let modules = sortRoadmapModules(
+    roadmapSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }))
+  );
+
+  if (planType === "License Basic") {
+    await applyBasicPlanAutoProgress(modules);
+    roadmapSnap = await getDocs(roadmapRef);
+    modules = sortRoadmapModules(
+      roadmapSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }))
+    );
+  }
+
+  setRoadmap(modules);
+  setRoadmapGenerationPending(false);
+
+      } catch (err) {
+        console.error(err);
+
+        const responseData = err?.response?.data;
+        const cvValidation = responseData?.cvValidation;
+        const isCvValidationFailure = Boolean(
+          err?.response?.status === 400 &&
+          cvValidation &&
+          cvValidation.recommendedAction === "reject"
+        );
+
+        if (isCvValidationFailure) {
+          setCvValidationWarning({
+            title: "Your uploaded file does not look like a CV",
+            message: responseData?.error || cvValidation?.reason || "Please upload a valid CV to continue.",
+            issues: Array.isArray(cvValidation?.issues) ? cvValidation.issues : [],
+          });
+        }
+        setRoadmapGenerationPending(false);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadRoadmap();
+
+    // 🔄 Refresh roadmap every 5 seconds to pick up auto-unlocked modules
+    const refreshInterval = setInterval(async () => {
+      try {
+        const roadmapRef = collection(
+          db,
+          "freshers",
+          companyId,
+          "departments",
+          deptId,
+          "users",
+          userId,
+          "roadmap"
+        );
+        let roadmapSnap = await getDocs(roadmapRef);
+        let modules = sortRoadmapModules(
+          roadmapSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }))
+        );
+
+        if (licensePlan === "License Basic") {
+          await applyBasicPlanAutoProgress(modules);
+          roadmapSnap = await getDocs(roadmapRef);
+          modules = sortRoadmapModules(
+            roadmapSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }))
+          );
+        }
+
+        setRoadmap(modules);
+      } catch (err) {
+        console.warn("⚠️ Roadmap refresh failed:", err);
+      }
+    }, 5000);
+
+    return () => clearInterval(refreshInterval);
+  }, [companyId, deptId, userId, licensePlan]);
+
+  const markDone = async (moduleId) => {
+  try {
+    setLoadingModuleId(moduleId);
+
+    const moduleRef = doc(
+      db,
+      "freshers",
+      companyId,
+      "departments",
+      deptId,
+      "users",
+      userId,
+      "roadmap",
+      moduleId
+    );
+
+    await updateDoc(moduleRef, {
+      completed: true,
+      status: "completed",
+    });
+
+    // ✅ Update roadmap list only
+    setRoadmap((prev) =>
+      prev.map((m) =>
+        m.id === moduleId
+          ? { ...m, completed: true, status: "completed" }
+          : m
+      )
+    );
+    // Update overall progress in user doc
+    try {
+      await updateProgress();
+    } catch (err) {
+      console.error("❌ Error updating overall progress after markDone:", err);
+    }
+  } catch (err) {
+    console.error("❌ Error marking module done:", err);
+  } finally {
+    setLoadingModuleId(null);
+  }
+};
+const markInProgress = async (module) => {
+  // ❌ Do nothing if already in-progress or completed
+  if (module.status === "in-progress" || isModuleEffectivelyCompleted(module)) return;
+
+  try {
+    const moduleRef = doc(
+      db,
+      "freshers",
+      companyId,
+      "departments",
+      deptId,
+      "users",
+      userId,
+      "roadmap",
+      module.id
+    );
+
+    await updateDoc(moduleRef, {
+      status: "in-progress",
+    });
+
+    // ✅ Update local state
+    setRoadmap((prev) =>
+      prev.map((m) =>
+        m.id === module.id
+          ? { ...m, status: "in-progress" }
+          : m
+      )
+    );
+  } catch (err) {
+    console.error("❌ Error updating module status:", err);
+  }
+};
+
+const getUnlockedModules = () => {
+  let unlockedNext = true;
+
+  return roadmap.map((module) => {
+    const unlocked = unlockedNext;
+    const isExpiredStatus = module.status === "expired";
+    if (!isModuleEffectivelyCompleted(module) && !isExpiredStatus) unlockedNext = false;
+
+    const moduleMaxAttempts = Math.max(3, Number(module.maxAttemptsOverride) || 0);
+    const moduleAttempts = Number(module.quizAttempts) || 0;
+    const quizAttemptsExhausted = !module.quizPassed && moduleAttempts >= moduleMaxAttempts;
+
+    // Calculate module time remaining
+    const timeRemaining = getModuleTimeRemaining(module);
+    const moduleExpired = isModuleExpired(module);
+    
+    // Check if quiz should be unlocked (70% time requirement by default)
+    const quizUnlockStatus = checkQuizTimeUnlock(module);
+    const moduleAttemptLimit = Number.isInteger(module.maxAttemptsOverride)
+      ? module.maxAttemptsOverride
+      : BASE_MAX_QUIZ_ATTEMPTS;
+    const quizAttemptLimitReached = !isBasicPlan && !module.quizPassed && (module.quizAttempts || 0) >= moduleAttemptLimit;
+    const isLocked = isBasicPlan
+      ? !unlocked
+      : (!unlocked || moduleExpired || module.moduleLocked || quizAttemptLimitReached);
+
+    return {
+      ...module,
+      locked: isLocked,
+      quizAttemptLimitReached,
+      moduleAttemptLimit,
+      quizTimeUnlocked: isBasicPlan ? true : quizUnlockStatus.isUnlocked,
+      quizUnlockMessage: quizUnlockStatus.message || "",
+      timeRemaining,
+      moduleExpired: isBasicPlan ? false : moduleExpired,
+      moduleMaxAttempts,
+      quizAttemptsExhausted: isBasicPlan ? false : quizAttemptsExhausted,
+    };
+  });
+};
+
+// Calculate time remaining to complete module
+const getModuleTimeRemaining = (module) => {
+  if (isModuleEffectivelyCompleted(module)) return { days: 0, hours: 0, expired: false, message: "Completed" };
+
+  const startDate = getModuleStartDate(module);
+
+  if (!startDate) {
+    return { days: 0, hours: 0, expired: false, message: "No deadline set" };
+  }
+  
+  const totalDays = module.estimatedDays || 1;
+  const deadlineDate = new Date(startDate.getTime() + totalDays * 24 * 60 * 60 * 1000);
+  const now = new Date();
+  if (startDate > now) {
+    const msUntilStart = startDate - now;
+    const daysUntilStart = Math.floor(msUntilStart / (1000 * 60 * 60 * 24));
+    const hoursUntilStart = Math.floor((msUntilStart % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+    return {
+      days: daysUntilStart,
+      hours: hoursUntilStart,
+      expired: false,
+      message: `Starts in ${daysUntilStart}d ${hoursUntilStart}h`
+    };
+  }
+  const timeRemaining = deadlineDate - now;
+  
+  if (timeRemaining <= 0) {
+    return { days: 0, hours: 0, expired: true, message: "Deadline expired" };
+  }
+  
+  const daysRemaining = Math.floor(timeRemaining / (1000 * 60 * 60 * 24));
+  const hoursRemaining = Math.floor((timeRemaining % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+  
+  if (daysRemaining > 0) {
+    return { days: daysRemaining, hours: hoursRemaining, expired: false, message: `${daysRemaining}d ${hoursRemaining}h remaining` };
+  } else {
+    return { days: 0, hours: hoursRemaining, expired: false, message: `${hoursRemaining}h remaining` };
+  }
+};
+
+const getDaysLeft = (module) => {
+  if (isModuleEffectivelyCompleted(module)) return 0;
+  const startDate = getModuleStartDate(module);
+  const totalDays = module.estimatedDays || 1;
+  if (!startDate) return totalDays;
+  const now = new Date();
+  if (startDate > now) return totalDays;
+
+  const deadlineDate = new Date(startDate.getTime() + totalDays * 24 * 60 * 60 * 1000);
+  const timeRemaining = deadlineDate - now;
+  if (timeRemaining <= 0) return 0;
+  return Math.max(0, Math.ceil(timeRemaining / (1000 * 60 * 60 * 24)));
+};
+
+const getCompletionDays = (module) => {
+  if (!isModuleEffectivelyCompleted(module)) return null;
+  const startDate = getModuleStartDate(module);
+  if (!startDate) return null;
+
+  const completionBase = module.completedAt || module.lastQuizSubmitted;
+  if (!completionBase) return null;
+
+  const endDate = completionBase.toDate ? completionBase.toDate() : new Date(completionBase);
+  const diffMs = endDate - startDate;
+  if (!Number.isFinite(diffMs) || diffMs < 0) return null;
+
+  return Math.max(1, Math.ceil(diffMs / (1000 * 60 * 60 * 24)));
+};
+
+// Check if module is expired
+const isModuleExpired = (module) => {
+  if (module.status === "expired") return true;
+  const timeInfo = getModuleTimeRemaining(module);
+  return timeInfo.expired && !isModuleEffectivelyCompleted(module);
+};
+
+  // Navigate to fresher training page
+  const viewDetails = (moduleId) => {
+    navigate(`/fresher-training/${companyId}/${deptId}/${userId}/${moduleId}`);
+  };
+  
+if (loading) return <CompanyPageLoader message="Loading roadmap modules..." />;
+
+
+
+if (!roadmap.length)
+  return (
+    <FresherShellLayout
+      userId={userId}
+      companyId={companyId}
+      deptId={deptId}
+      companyName={companyName}
+      roadmapGenerated={false}
+      headerLabel="Roadmap"
+      contentClassName="p-4 md:p-8"
+    >
+      <div className="min-h-[60vh] flex flex-col items-center justify-center text-white p-8">
+        {cvValidationWarning && (
+          <div className="w-full max-w-2xl mb-6 rounded-xl border border-yellow-400/40 bg-yellow-500/10 p-4 text-left">
+            <p className="text-yellow-300 font-semibold mb-2">⚠️ {cvValidationWarning.title}</p>
+            <p className="text-[#FCEFC7] text-sm">{cvValidationWarning.message}</p>
+            {cvValidationWarning.issues.length > 0 && (
+              <ul className="mt-2 list-disc pl-5 text-xs text-[#FCEFC7]">
+                {cvValidationWarning.issues.slice(0, 3).map((issue, idx) => (
+                  <li key={idx}>{issue}</li>
+                ))}
+              </ul>
+            )}
+            <button
+              onClick={() =>
+                navigate("/fresher-dashboard", {
+                  state: {
+                    forceOnboarding: true,
+                    onboardingNotice: "Please re-upload a valid CV (PDF or DOCX) so we can generate your roadmap.",
+                    userId,
+                    companyId,
+                    deptId,
+                    companyName,
+                    email: location?.state?.email || userData?.email || localStorage.getItem("email"),
+                  },
+                })
+              }
+              className="mt-3 px-4 py-2 bg-yellow-300 text-[#031C3A] rounded font-semibold hover:bg-yellow-200 transition"
+            >
+              Re-upload CV Now
+            </button>
+          </div>
+        )}
+
+        <div className="text-[#00FFFF] mb-4">
+          <svg
+            className="w-20 h-20 mx-auto animate-bounce"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M9 17v-6h6v6m2 4H7a2 2 0 01-2-2V7a2 2 0 012-2h5l2 2h5a2 2 0 012 2v10a2 2 0 01-2 2z"
+            />
+          </svg>
+        </div>
+        <p className="text-lg font-semibold mb-2">No modules found for this fresher</p>
+        <p className="text-sm text-[#AFCBE3] mb-4">
+          {roadmapGenerationPending
+            ? "Your roadmap is still being generated. Please wait a moment while we fetch the saved modules."
+            : "Roadmap will be generated once onboarding starts."}
+        </p>
+        <button
+          onClick={() => window.location.reload()}
+          className="px-5 py-2 bg-[#00FFFF] text-[#031C3A] rounded font-semibold hover:bg-white transition"
+        >
+          {roadmapGenerationPending ? "Check Again" : "Retry / Refresh"}
+        </button>
+      </div>
+    </FresherShellLayout>
+  );
+  const unlockedModules = getUnlockedModules();
+  return (
+    <FresherShellLayout
+      userId={userId}
+      companyId={companyId}
+      deptId={deptId}
+      companyName={companyName}
+      roadmapGenerated={true}
+      headerLabel="Roadmap"
+      contentClassName="p-4 md:p-8"
+    >
+      <div className="space-y-6">
+        {cvValidationWarning && (
+          <div className="rounded-xl border border-yellow-400/40 bg-yellow-500/10 p-4">
+            <p className="text-yellow-300 font-semibold">⚠️ {cvValidationWarning.title}</p>
+            <p className="text-[#FCEFC7] text-sm mt-1">{cvValidationWarning.message}</p>
+            <button
+              onClick={() =>
+                navigate("/fresher-dashboard", {
+                  state: {
+                    forceOnboarding: true,
+                    onboardingNotice: "Please re-upload a valid CV (PDF or DOCX) so we can generate your roadmap.",
+                    userId,
+                    companyId,
+                    deptId,
+                    companyName,
+                    email: location?.state?.email || userData?.email || localStorage.getItem("email"),
+                  },
+                })
+              }
+              className="mt-3 px-4 py-2 bg-yellow-300 text-[#031C3A] rounded font-semibold hover:bg-yellow-200 transition"
+            >
+              Re-upload CV
+            </button>
+          </div>
+        )}
+
+        <h2 className="text-3xl font-bold text-[#00FFFF] mb-2">Your Personalized Roadmap</h2>
+        {roadmapGeneratedAt && (
+          <p className="text-sm text-[#AFCBE3] mb-6">
+            Roadmap generated on {roadmapGeneratedAt.toLocaleString("en-US", {
+              weekday: "long",
+              year: "numeric",
+              month: "long",
+              day: "numeric",
+              hour: "numeric",
+              minute: "2-digit"
+            })}
+          </p>
+        )}
+        {unlockedModules.map((module) => (
+<div
+  key={module.id}
+  className={`relative bg-[#021B36]/80 border border-[#00FFFF30]
+  rounded-xl p-6 shadow-md transition
+  ${isModuleEffectivelyCompleted(module) ? "opacity-60" : ""}
+  ${module.locked ? "opacity-40" : ""}`}
+>
+  {/* Lock icon */}
+  {module.locked && (
+    <div className="absolute inset-0 flex flex-col items-center justify-center text-4xl z-10 bg-[#021B36]/60 rounded-xl">
+      🔒
+      {module.moduleExpired && (
+        <p className="text-red-400 text-sm mt-2">Module deadline expired</p>
+      )}
+      {module.quizAttemptLimitReached && (
+        <p className="text-red-400 text-sm mt-2 text-center px-3">
+          Quiz locked after {module.moduleAttemptLimit} attempts
+        </p>
+      )}
+    </div>
+  )}
+
+  {/* Content */}
+  <div>
+    <h3 className="text-xl font-semibold text-[#00FFFF] mb-2">
+      {module.moduleTitle}
+    </h3>
+
+    <p className="text-[#AFCBE3] text-sm mb-3">
+      {module.description}
+    </p>
+
+    <p className="text-xs text-[#AFCBE3] mb-2">
+      ⏱ {module.estimatedDays} days
+    </p>
+    
+    {module.moduleExpired && (
+      <p className="text-xs text-red-400 font-semibold mb-2 bg-red-500/10 px-2 py-1 rounded inline-block">
+        ⏰ DEADLINE EXCEEDED - Module Expired
+      </p>
+    )}
+    
+    {isModuleEffectivelyCompleted(module) && !module.moduleExpired && getCompletionDays(module) && (
+      <p className="text-xs text-green-400 mb-2">
+        ✓ Completed in {getCompletionDays(module)} day{getCompletionDays(module) !== 1 ? "s" : ""}
+      </p>
+    )}
+    
+    {/* Time Remaining Display - Moved below to avoid overlap with status badge */}
+    {!module.locked && !isModuleEffectivelyCompleted(module) && (
+      <div className={`text-sm font-semibold mt-2 ${
+        module.timeRemaining.expired ? "text-red-400" : 
+        module.timeRemaining.days === 0 ? "text-yellow-400" : 
+        "text-[#00FFFF]"
+      }`}>
+        <div>Time Left: {module.timeRemaining.message}</div>
+        {module.timeRemaining.expired
+          ? "⏰ EXPIRED"
+          : module.timeRemaining.message.startsWith("Starts in")
+        }
+      </div>
+    )}
+  </div>
+
+  {/* Status Badge */}
+  <span className={`absolute top-4 right-4 px-3 py-1 rounded-full text-xs font-semibold
+    ${module.moduleExpired
+      ? "bg-red-600/30 text-red-400"
+      : isModuleEffectivelyCompleted(module)
+      ? "bg-green-500/20 text-green-400"
+      : "bg-yellow-500/20 text-yellow-400"}`}
+  >
+    {getModuleDisplayStatus(module)}
+  </span>
+
+  {/* 🔒 TIME LOCK WARNING: Quiz not yet available (Pro only) */}
+  {/* Displayed when quiz is locked due to insufficient time elapsed (< unlock threshold of module time) */}
+  {licensePlan === "License Pro" && !module.locked && !isModuleEffectivelyCompleted(module) && !module.quizTimeUnlocked && (
+    <div className="mt-4 p-3 bg-yellow-500/10 border border-yellow-500/30 rounded-lg">
+      <div className="flex items-start gap-2">
+        <span className="text-yellow-400 text-xl">⚠️</span>
+        <div className="flex-1">
+          <p className="text-yellow-400 font-semibold text-sm mb-1">Quiz Not Yet Available</p>
+          <p className="text-[#AFCBE3] text-xs">
+            {/* Shows countdown until unlock threshold is met */}
+            {module.quizUnlockMessage}. You must complete the quiz within the module timeframe ({module.timeRemaining.message}) or the module will be locked.
+          </p>
+        </div>
+      </div>
+    </div>
+  )}
+  
+  {/* 🔓 TIME LOCK CLEARED: Quiz is now available (Pro only) */}
+  {/* Displayed when the module unlock threshold has elapsed - quiz is unlocked and ready */}
+  {licensePlan === "License Pro" && !module.locked && !isModuleEffectivelyCompleted(module) && module.quizTimeUnlocked && !module.quizPassed && (
+    <div className="mt-4 p-3 bg-blue-500/10 border border-blue-500/30 rounded-lg">
+      <div className="flex items-start gap-2">
+        <span className="text-blue-400 text-xl">📝</span>
+        <div className="flex-1">
+          <p className="text-blue-400 font-semibold text-sm mb-1">Quiz Available - Complete Soon!</p>
+          <p className="text-[#AFCBE3] text-xs">
+            {/* Module time unlock threshold has been met - learner can now attempt quiz */}
+            You can now attempt the quiz. Please complete it within the remaining time ({module.timeRemaining.message}) or the module will be locked.
+          </p>
+          {module.retriesGranted !== undefined && module.retriesGranted > 0 && (
+            <p className="text-[#00FFFF] text-xs mt-1 font-semibold">
+              TrainMate granted you {module.retriesGranted} more {module.retriesGranted === 1 ? 'retry' : 'retries'} based on your performance
+            </p>
+          )}
+          {!module.retriesGranted && (
+            <p className="text-[#AFCBE3] text-xs mt-1">
+              TrainMate will analyze your performance and decide retry allocation dynamically.
+            </p>
+          )}
+        </div>
+      </div>
+    </div>
+  )}
+
+  {/* Actions */}
+  {!module.locked && !isModuleEffectivelyCompleted(module) && (
+    <div className="flex gap-3 mt-4">
+      
+      <button
+  onClick={async () => {
+    await markInProgress(module);
+
+    navigate(`/fresher-training/${companyId}/${deptId}/${userId}`,
+      { state: { moduleId: module.id, companyName },} );}}
+  className="px-4 py-2 bg-[#00FFFF] text-[#031C3A] rounded font-semibold"
+>Start Learning
+</button>
+      <button
+  onClick={() =>
+    navigate(
+      `/module-details/${companyId}/${deptId}/${userId}/${module.id}/${companyName}`,
+    )
+  }
+  className="px-4 py-2 border border-[#00FFFF] text-[#00FFFF] rounded"
+>
+  View Details
+</button>
+      {/* Quiz button - only available for Pro plan users */}
+      {licensePlan === "License Pro" && (
+        <button
+          onClick={() =>
+            navigate(
+              `/quiz/${companyId}/${deptId}/${userId}/${module.id}`,
+              { state: { companyName } }
+            )
+          }
+          disabled={!module.quizPassed && !module.quizTimeUnlocked}
+          title={
+            !module.quizPassed && !module.quizTimeUnlocked
+              ? module.quizUnlockMessage || "Quiz is locked until required module time is completed"
+              : module.quizAttempts > 0
+              ? `Retry Quiz - TrainMate will analyze and decide retry allocation`
+              : "Take Quiz - TrainMate will evaluate and provide feedback"
+          }
+          className={`px-4 py-2 border border-[#00FFFF] text-[#00FFFF] rounded relative group
+            hover:bg-[#00FFFF]/10 disabled:opacity-50 disabled:cursor-not-allowed
+          `}
+        >
+          {module.quizPassed ? "✅ Quiz Passed" :
+           module.quizAttempts > 0 
+             ? ` Retry (Attempt ${module.quizAttempts + 1})` 
+             : "📝 Take Quiz"}
+          
+          {/* Tooltip for AI-powered quiz */}
+          {module.quizTimeUnlocked && (
+            <div className="absolute left-full top-1/2 transform -translate-y-1/2 ml-3 hidden group-hover:block w-72 bg-[#021B36] border border-purple-500 rounded-lg p-3 text-sm z-10 whitespace-normal">
+              <div className="text-purple-300 font-semibold mb-1 flex items-center gap-2">
+                <span></span> TrainMate-Powered Assessment
+              </div>
+              <div className="text-[#AFCBE3] text-xs space-y-1">
+                <p>• It analyzes your performance in real-time</p>
+                <p>• Dynamically allocates retry attempts (1-3)</p>
+                <p>• Provides personalized recommendations</p>
+                <p>• Adapts module timeline based on progress</p>
+              </div>
+              <div className="absolute right-full top-1/2 transform -translate-y-1/2 w-0 h-0 border-t-8 border-b-8 border-r-8 border-transparent border-r-purple-500"></div>
+            </div>
+          )}
+        </button>
+      )}
+
+    </div>
+  )}
+</div>
+
+        ))}
+    
+
+      </div>
+    </FresherShellLayout>
+  );
+}

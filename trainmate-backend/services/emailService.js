@@ -1,0 +1,1644 @@
+import nodemailer from "nodemailer";
+import dotenv from "dotenv";
+import PDFDocument from "pdfkit";
+
+dotenv.config();
+
+/**
+ * Create email transporter using Gmail
+ */
+function createTransporter() {
+  const gmailPassword = process.env.GMAIL_APP_PASSWORD;
+  
+  if (!gmailPassword) {
+    throw new Error("GMAIL_APP_PASSWORD environment variable is not set. Email service cannot send messages.");
+  }
+  
+  return nodemailer.createTransport({
+    service: "gmail",
+    auth: {
+      user: "trainmate01@gmail.com",
+      pass: gmailPassword, // App password, not regular password
+    },
+    // For testing behind proxies with SSL inspection
+    tls: {
+      rejectUnauthorized: false,
+    },
+  });
+}
+
+/**
+ * Send roadmap generation email with PDF attachment
+ * @param {Object} params - Email parameters
+ * @param {string} params.userEmail - Recipient email
+ * @param {string} params.userName - User name
+ * @param {string} params.companyName - Company name
+ * @param {string} params.trainingTopic - Training topic
+ * @param {number} params.moduleCount - Number of modules
+ * @param {Buffer} params.pdfBuffer - PDF file buffer
+ */
+export async function sendRoadmapEmail({
+  userEmail,
+  userName,
+  companyName,
+  trainingTopic,
+  moduleCount,
+  pdfBuffer,
+}) {
+  try {
+    console.log("📧 Email service: preparing transporter and message...");
+    const transporter = createTransporter();
+
+    // Use actual recipient email
+    const recipientEmail = userEmail;
+    console.log(`📧 Sending email to ${recipientEmail}`);
+
+    const mailOptions = {
+      from: {
+        name: "TrainMate",
+        address: "trainmate01@gmail.com",
+      },
+      to: recipientEmail,
+      subject: `Your Training Roadmap Has Been Generated - ${companyName}`,
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f4f4f4;">
+          <div style="background-color: #031C3A; padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
+            <h1 style="color: #00FFFF; margin: 0; font-size: 28px;">🎓 TrainMate</h1>
+          </div>
+          
+          <div style="background-color: white; padding: 30px; border-radius: 0 0 10px 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+            <h2 style="color: #031C3A; margin-top: 0;">Hi ${userName},</h2>
+            
+            <p style="color: #333; font-size: 16px; line-height: 1.6;">
+              Great news! Your personalized training roadmap for <strong>${companyName}</strong> has been successfully generated.
+            </p>
+            
+            <div style="background-color: #E8F4F8; padding: 20px; border-left: 4px solid #00FFFF; margin: 20px 0;">
+              <h3 style="color: #031C3A; margin-top: 0;">📋 Roadmap Details</h3>
+              <p style="margin: 5px 0; color: #333;">
+                <strong>Training Focus:</strong> ${trainingTopic}
+              </p>
+              <p style="margin: 5px 0; color: #333;">
+                <strong>Total Modules:</strong> ${moduleCount}
+              </p>
+              <p style="margin: 5px 0; color: #333;">
+                <strong>Company:</strong> ${companyName}
+              </p>
+            </div>
+            
+            <p style="color: #333; font-size: 16px; line-height: 1.6;">
+              Your roadmap has been tailored to your skills and experience. Please find the detailed roadmap attached as a PDF.
+            </p>
+            
+            <div style="text-align: center; margin: 30px 0;">
+              <a href="#" style="background-color: #00FFFF; color: #031C3A; padding: 15px 30px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;">
+                Start Your Training
+              </a>
+            </div>
+            
+            <p style="color: #666; font-size: 14px; line-height: 1.6; margin-top: 30px;">
+              Best regards,<br>
+              <strong style="color: #031C3A;">TrainMate Team</strong><br>
+              Your AI-Powered Corporate Training Platform
+            </p>
+          </div>
+          
+          <div style="text-align: center; padding: 20px; color: #666; font-size: 12px;">
+            <p>© 2026 TrainMate. All rights reserved.</p>
+            <p>This is an automated message. Please do not reply to this email.</p>
+          </div>
+        </div>
+      `,
+      attachments: [
+        {
+          filename: `TrainMate_Roadmap_${userName.replace(/\s+/g, "_")}.pdf`,
+          content: pdfBuffer,
+          contentType: "application/pdf",
+        },
+      ],
+    };
+
+    const info = await transporter.sendMail(mailOptions);
+    console.log("✅ Email sent successfully:", info.messageId);
+    return { success: true, messageId: info.messageId };
+  } catch (error) {
+    console.error("❌ Email sending failed:", error);
+    throw error;
+  }
+}
+
+/**
+ * Send training locked notification to company email
+ * @param {Object} params - Email parameters
+ * @param {string} params.companyEmail - Company recipient email
+ * @param {string} params.companyName - Company name
+ * @param {string} params.userName - User name
+ * @param {string} params.userEmail - User email
+ * @param {string} params.moduleTitle - Module title
+ * @param {number} params.attemptNumber - Attempt number
+ * @param {number} params.score - Latest score
+ */
+export async function sendTrainingLockedEmail({
+  companyEmail,
+  companyName,
+  userName,
+  userEmail,
+  moduleTitle,
+  attemptNumber,
+  score,
+  lockIssueLabel = "Retries exceeded",
+  lockIssueMessage = "Please review the learner record and decide the next step.",
+  issueType = "retries_exceeded", // "retries_exceeded" or "module_expired"
+}) {
+  try {
+    console.log("Email service: preparing training lock notification...");
+    const transporter = createTransporter();
+
+    const recipientEmail = companyEmail;
+    console.log(`Sending training lock email to ${recipientEmail}`);
+
+    // Generate dynamic content based on issue type
+    let emailTitle = "Training Locked Notification";
+    let emailHeading = "A trainee has been locked";
+    let emailIntro = "Please review the issue below and decide next steps.";
+    let accentColor = "#00FFFF";
+    let backgroundColor = "#E8F4F8";
+    let subject = `Training Locked Alert - ${companyName}`;
+    let detailsHTML = "";
+
+    if (issueType === "module_expired") {
+      emailTitle = "Module Deadline Expired";
+      emailHeading = "Training Module Deadline Has Expired";
+      emailIntro = "A trainee's training module has automatically locked due to the deadline expiration. The learner can no longer access this module until you grant additional time or unlock it.";
+      accentColor = "#FF6B6B";
+      backgroundColor = "#FFE8E8";
+      subject = `Module Expired Alert - ${companyName}`;
+      detailsHTML = `
+        <p style="margin: 6px 0; color: #333;"><strong>Company:</strong> ${companyName}</p>
+        <p style="margin: 6px 0; color: #333;"><strong>User:</strong> ${userName || "Unknown"}</p>
+        <p style="margin: 6px 0; color: #333;"><strong>User Email:</strong> ${userEmail || "Unknown"}</p>
+        <p style="margin: 6px 0; color: #333;"><strong>Module:</strong> ${moduleTitle || "Unknown"}</p>
+        <p style="margin: 6px 0; color: #333;"><strong>Reason:</strong> Deadline expired - module automatically locked</p>
+      `;
+    } else if (issueType === "retries_exceeded") {
+      emailTitle = "Quiz Attempt Limit Reached";
+      emailHeading = "Quiz Attempt Limit Reached - Training Locked";
+      emailIntro = "A trainee has exhausted all available quiz attempts for a training module. Their training has been locked and they cannot proceed until you grant additional attempts or manually unlock the module.";
+      accentColor = "#00FFFF";
+      backgroundColor = "#E8F4F8";
+      subject = `Quiz Attempts Exhausted - ${companyName}`;
+      detailsHTML = `
+        <p style="margin: 6px 0; color: #333;"><strong>Company:</strong> ${companyName}</p>
+        <p style="margin: 6px 0; color: #333;"><strong>User:</strong> ${userName || "Unknown"}</p>
+        <p style="margin: 6px 0; color: #333;"><strong>User Email:</strong> ${userEmail || "Unknown"}</p>
+        <p style="margin: 6px 0; color: #333;"><strong>Module:</strong> ${moduleTitle || "Unknown"}</p>
+        <p style="margin: 6px 0; color: #333;"><strong>Attempts Used:</strong> ${attemptNumber || "N/A"}</p>
+        <p style="margin: 6px 0; color: #333;"><strong>Latest Score:</strong> ${typeof score === "number" ? `${score}%` : "N/A"}</p>
+        <p style="margin: 6px 0; color: #333;"><strong>Reason:</strong> All quiz attempts exhausted</p>
+      `;
+    }
+
+    const mailOptions = {
+      from: {
+        name: "TrainMate",
+        address: "trainmate01@gmail.com",
+      },
+      to: recipientEmail,
+      subject: subject,
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 640px; margin: 0 auto; padding: 20px; background-color: #f4f4f4;">
+          <div style="background-color: #031C3A; padding: 24px; text-align: center; border-radius: 10px 10px 0 0;">
+            <h1 style="color: #00FFFF; margin: 0; font-size: 24px;">TrainMate</h1>
+          </div>
+          <div style="background-color: white; padding: 24px; border-radius: 0 0 10px 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+            <h2 style="color: #031C3A; margin-top: 0;">⚠️ ${emailTitle}</h2>
+            <p style="color: #D9534F; font-size: 16px; font-weight: bold; line-height: 1.6;">
+              ${emailHeading}
+            </p>
+            <p style="color: #333; font-size: 15px; line-height: 1.6;">
+              ${emailIntro}
+            </p>
+            <div style="background-color: ${backgroundColor}; padding: 16px; border-left: 4px solid ${accentColor}; margin: 16px 0;">
+              ${detailsHTML}
+            </div>
+            <p style="color: #333; font-size: 14px; line-height: 1.6; background-color: #f9f9f9; padding: 12px; border-radius: 5px;">
+              <strong>Next Steps:</strong> ${lockIssueMessage}
+            </p>
+            <p style="color: #666; font-size: 13px; line-height: 1.6; margin-top: 20px;">
+              Regards,<br>
+              <strong style="color: #031C3A;">TrainMate Team</strong>
+            </p>
+          </div>
+          <div style="text-align: center; padding: 16px; color: #666; font-size: 12px;">
+            <p>This is an automated message. Please do not reply.</p>
+          </div>
+        </div>
+      `,
+    };
+
+    const info = await transporter.sendMail(mailOptions);
+    console.log("Training lock email sent:", info.messageId);
+    return { success: true, messageId: info.messageId };
+  } catch (error) {
+    console.error("Training lock email failed:", error);
+    throw error;
+  }
+}
+
+/**
+ * Send quiz proctoring security alert to company admin email
+ * @param {Object} params - Email parameters
+ * @param {string} params.companyEmail - Company recipient email
+ * @param {string} params.companyName - Company name
+ * @param {string} params.userName - User name
+ * @param {string} params.userEmail - User email
+ * @param {string} params.moduleTitle - Module title
+ * @param {number} params.violationCount - Number of violations
+ * @param {number} params.timeAwaySeconds - Last away duration in seconds
+ */
+export async function sendQuizSecurityAlertEmail({
+  companyEmail,
+  companyName,
+  userName,
+  userEmail,
+  moduleTitle,
+  violationCount,
+  timeAwaySeconds,
+}) {
+  try {
+    console.log("Email service: preparing quiz security alert...");
+    const transporter = createTransporter();
+
+    const recipientEmail = companyEmail;
+    console.log(`Sending quiz security alert email to ${recipientEmail}`);
+
+    const mailOptions = {
+      from: {
+        name: "TrainMate",
+        address: "trainmate01@gmail.com",
+      },
+      to: recipientEmail,
+      subject: `Quiz Security Alert - ${companyName}`,
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 640px; margin: 0 auto; padding: 20px; background-color: #f4f4f4;">
+          <div style="background-color: #031C3A; padding: 24px; text-align: center; border-radius: 10px 10px 0 0;">
+            <h1 style="color: #00FFFF; margin: 0; font-size: 24px;">TrainMate</h1>
+          </div>
+          <div style="background-color: white; padding: 24px; border-radius: 0 0 10px 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+            <h2 style="color: #031C3A; margin-top: 0;">Quiz Proctoring Security Alert</h2>
+            <p style="color: #333; font-size: 15px; line-height: 1.6;">
+              A trainee exceeded the tab-switch threshold during an active quiz and triggered auto-submission security action.
+            </p>
+            <div style="background-color: #FFF5F5; padding: 16px; border-left: 4px solid #FF6B6B; margin: 16px 0;">
+              <p style="margin: 6px 0; color: #333;"><strong>Company:</strong> ${companyName}</p>
+              <p style="margin: 6px 0; color: #333;"><strong>User:</strong> ${userName || "Unknown"}</p>
+              <p style="margin: 6px 0; color: #333;"><strong>User Email:</strong> ${userEmail || "Unknown"}</p>
+              <p style="margin: 6px 0; color: #333;"><strong>Module:</strong> ${moduleTitle || "Unknown"}</p>
+              <p style="margin: 6px 0; color: #333;"><strong>Violation Count:</strong> ${violationCount || "N/A"}</p>
+              <p style="margin: 6px 0; color: #333;"><strong>Last Away Duration:</strong> ${typeof timeAwaySeconds === "number" ? `${timeAwaySeconds}s` : "N/A"}</p>
+            </div>
+            <p style="color: #333; font-size: 14px; line-height: 1.6;">
+              Please review this trainee's quiz attempt and take any required action.
+            </p>
+            <p style="color: #666; font-size: 13px; line-height: 1.6; margin-top: 20px;">
+              Regards,<br>
+              <strong style="color: #031C3A;">TrainMate Team</strong>
+            </p>
+          </div>
+          <div style="text-align: center; padding: 16px; color: #666; font-size: 12px;">
+            <p>This is an automated security alert. Please do not reply.</p>
+          </div>
+        </div>
+      `,
+    };
+
+    const info = await transporter.sendMail(mailOptions);
+    console.log("Quiz security alert email sent:", info.messageId);
+    return { success: true, messageId: info.messageId };
+  } catch (error) {
+    console.error("Quiz security alert email failed:", error);
+    throw error;
+  }
+}
+
+/**
+ * Send final certification quiz opened email to learner
+ * @param {Object} params
+ * @param {string} params.userEmail
+ * @param {string} params.userName
+ * @param {string} params.companyName
+ * @param {string} params.deadlineText
+ * @param {number} params.maxAttempts
+ * @param {number} params.passThreshold
+ */
+export async function sendFinalQuizOpenedEmail({
+  userEmail,
+  userName,
+  companyName,
+  deadlineText,
+  maxAttempts,
+  passThreshold,
+}) {
+  try {
+    console.log("Email service: preparing final quiz opened email...");
+    const transporter = createTransporter();
+
+    const recipientEmail = userEmail;
+    console.log(`Sending final quiz opened email to ${recipientEmail}`);
+
+    const mailOptions = {
+      from: {
+        name: "TrainMate",
+        address: "trainmate01@gmail.com",
+      },
+      to: recipientEmail,
+      subject: `Final Certification Quiz Opened - ${companyName}`,
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 640px; margin: 0 auto; padding: 20px; background-color: #f4f4f4;">
+          <div style="background-color: #031C3A; padding: 24px; text-align: center; border-radius: 10px 10px 0 0;">
+            <h1 style="color: #00FFFF; margin: 0; font-size: 24px;">TrainMate</h1>
+          </div>
+          <div style="background-color: white; padding: 24px; border-radius: 0 0 10px 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+            <h2 style="color: #031C3A; margin-top: 0;">Final Certification Quiz is Now Open</h2>
+            <p style="color: #333; font-size: 15px; line-height: 1.6;">
+              Hi ${userName || "Learner"}, your final certification quiz for ${companyName || "TrainMate"} is now available.
+            </p>
+            <div style="background-color: #E8F4F8; padding: 16px; border-left: 4px solid #00FFFF; margin: 16px 0;">
+              <p style="margin: 6px 0; color: #333;"><strong>Attempts Allowed:</strong> ${maxAttempts}</p>
+              <p style="margin: 6px 0; color: #333;"><strong>Pass Threshold:</strong> ${passThreshold}%</p>
+              <p style="margin: 6px 0; color: #333;"><strong>Deadline:</strong> ${deadlineText}</p>
+              <p style="margin: 6px 0; color: #333;"><strong>Format:</strong> MCQ + One-Liners + Coding</p>
+            </div>
+            <p style="color: #333; font-size: 14px; line-height: 1.6;">
+              Please attempt the final quiz before the deadline. Passing this quiz unlocks your certificate immediately.
+            </p>
+            <p style="color: #666; font-size: 13px; line-height: 1.6; margin-top: 20px;">
+              Regards,<br>
+              <strong style="color: #031C3A;">TrainMate Team</strong>
+            </p>
+          </div>
+          <div style="text-align: center; padding: 16px; color: #666; font-size: 12px;">
+            <p>This is an automated message. Please do not reply.</p>
+          </div>
+        </div>
+      `,
+    };
+
+    const info = await transporter.sendMail(mailOptions);
+    console.log("Final quiz opened email sent:", info.messageId);
+    return { success: true, messageId: info.messageId };
+  } catch (error) {
+    console.error("Final quiz opened email failed:", error);
+    throw error;
+  }
+}
+
+/**
+ * Send training completion notification to company admin email
+ * @param {Object} params
+ * @param {string} params.companyEmail
+ * @param {string} params.companyName
+ * @param {string} params.userName
+ * @param {string} params.userEmail
+ * @param {string} params.deptId
+ * @param {number} params.finalScore
+ */
+export async function sendTrainingCompletedEmail({
+  companyEmail,
+  companyName,
+  userName,
+  userEmail,
+  deptId,
+  finalScore,
+}) {
+  try {
+    console.log("Email service: preparing training completion email...");
+    const transporter = createTransporter();
+
+    const recipientEmail = companyEmail;
+    console.log(`Sending training completion email to ${recipientEmail}`);
+
+    const mailOptions = {
+      from: {
+        name: "TrainMate",
+        address: "trainmate01@gmail.com",
+      },
+      to: recipientEmail,
+      subject: `Training Completed Alert - ${companyName}`,
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 640px; margin: 0 auto; padding: 20px; background-color: #f4f4f4;">
+          <div style="background-color: #031C3A; padding: 24px; text-align: center; border-radius: 10px 10px 0 0;">
+            <h1 style="color: #00FFFF; margin: 0; font-size: 24px;">TrainMate</h1>
+          </div>
+          <div style="background-color: white; padding: 24px; border-radius: 0 0 10px 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+            <h2 style="color: #031C3A; margin-top: 0;">Training Completion Notification</h2>
+            <p style="color: #333; font-size: 15px; line-height: 1.6;">
+              A fresher has successfully completed the full training journey and unlocked their certificate.
+            </p>
+            <div style="background-color: #E8F4F8; padding: 16px; border-left: 4px solid #00FFFF; margin: 16px 0;">
+              <p style="margin: 6px 0; color: #333;"><strong>Company:</strong> ${companyName || "TrainMate"}</p>
+              <p style="margin: 6px 0; color: #333;"><strong>User:</strong> ${userName || "Unknown"}</p>
+              <p style="margin: 6px 0; color: #333;"><strong>User Email:</strong> ${userEmail || "Unknown"}</p>
+              <p style="margin: 6px 0; color: #333;"><strong>Department:</strong> ${deptId || "Unknown"}</p>
+              <p style="margin: 6px 0; color: #333;"><strong>Final Score:</strong> ${typeof finalScore === "number" ? `${finalScore}%` : "N/A"}</p>
+            </div>
+            <p style="color: #666; font-size: 13px; line-height: 1.6; margin-top: 20px;">
+              Regards,<br>
+              <strong style="color: #031C3A;">TrainMate Team</strong>
+            </p>
+          </div>
+          <div style="text-align: center; padding: 16px; color: #666; font-size: 12px;">
+            <p>This is an automated message. Please do not reply.</p>
+          </div>
+        </div>
+      `,
+    };
+
+    const info = await transporter.sendMail(mailOptions);
+    console.log("Training completion email sent:", info.messageId);
+    return { success: true, messageId: info.messageId };
+  } catch (error) {
+    console.error("Training completion email failed:", error);
+    throw error;
+  }
+}
+
+/**
+ * Send completed training summary report with PDF attachment to company admin
+ * @param {Object} params
+ * @param {string} params.companyEmail
+ * @param {string} params.companyName
+ * @param {string} params.userName
+ * @param {string} params.userEmail
+ * @param {string} params.deptId
+ * @param {number|null} params.finalScore
+ * @param {number} params.completedModules
+ * @param {number} params.totalModules
+ * @param {number} params.totalQuizAttempts
+ * @param {Buffer} params.pdfBuffer
+ */
+export async function sendTrainingSummaryReportEmail({
+  companyEmail,
+  companyName,
+  userName,
+  userEmail,
+  deptId,
+  finalScore,
+  completedModules,
+  totalModules,
+  totalQuizAttempts,
+  pdfBuffer,
+}) {
+  try {
+    console.log("Email service: preparing training summary report email...");
+    const transporter = createTransporter();
+
+    const recipientEmail = companyEmail;
+    const safeUserName = String(userName || "Learner").replace(/\s+/g, "_");
+
+    const mailOptions = {
+      from: {
+        name: "TrainMate",
+        address: "trainmate01@gmail.com",
+      },
+      to: recipientEmail,
+      subject: `Completed Training Summary Report - ${companyName}`,
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 640px; margin: 0 auto; padding: 20px; background-color: #f4f4f4;">
+          <div style="background-color: #031C3A; padding: 24px; text-align: center; border-radius: 10px 10px 0 0;">
+            <h1 style="color: #00FFFF; margin: 0; font-size: 24px;">TrainMate</h1>
+          </div>
+          <div style="background-color: white; padding: 24px; border-radius: 0 0 10px 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+            <h2 style="color: #031C3A; margin-top: 0;">Completed Training Summary Report</h2>
+            <p style="color: #333; font-size: 15px; line-height: 1.6;">
+              ${userName || "A learner"} has completed all training modules. The summarized report is attached as PDF.
+            </p>
+            <div style="background-color: #E8F4F8; padding: 16px; border-left: 4px solid #00FFFF; margin: 16px 0;">
+              <p style="margin: 6px 0; color: #333;"><strong>Company:</strong> ${companyName || "TrainMate"}</p>
+              <p style="margin: 6px 0; color: #333;"><strong>User:</strong> ${userName || "Unknown"}</p>
+              <p style="margin: 6px 0; color: #333;"><strong>User Email:</strong> ${userEmail || "Unknown"}</p>
+              <p style="margin: 6px 0; color: #333;"><strong>Department:</strong> ${deptId || "Unknown"}</p>
+              <p style="margin: 6px 0; color: #333;"><strong>Modules Completed:</strong> ${Number(completedModules) || 0}/${Number(totalModules) || 0}</p>
+              <p style="margin: 6px 0; color: #333;"><strong>Total Quiz Attempts:</strong> ${Number(totalQuizAttempts) || 0}</p>
+              <p style="margin: 6px 0; color: #333;"><strong>Final Score:</strong> ${typeof finalScore === "number" ? `${finalScore}%` : "N/A"}</p>
+            </div>
+            <p style="color: #666; font-size: 13px; line-height: 1.6; margin-top: 20px;">
+              Regards,<br>
+              <strong style="color: #031C3A;">TrainMate Team</strong>
+            </p>
+          </div>
+          <div style="text-align: center; padding: 16px; color: #666; font-size: 12px;">
+            <p>This is an automated message. Please do not reply.</p>
+          </div>
+        </div>
+      `,
+      attachments: [
+        {
+          filename: `Completed_Training_Summary_${safeUserName}.pdf`,
+          content: pdfBuffer,
+          contentType: "application/pdf",
+        },
+      ],
+    };
+
+    const info = await transporter.sendMail(mailOptions);
+    console.log("Training summary report email sent:", info.messageId);
+    return { success: true, messageId: info.messageId };
+  } catch (error) {
+    console.error("Training summary report email failed:", error);
+    throw error;
+  }
+}
+
+/**
+ * Send final quiz failed notification to company admin email
+ * @param {Object} params
+ * @param {string} params.companyEmail
+ * @param {string} params.companyName
+ * @param {string} params.userName
+ * @param {string} params.userEmail
+ * @param {string} params.deptId
+ * @param {number} params.attemptsUsed
+ * @param {number} params.maxAttempts
+ * @param {number} params.finalScore
+ */
+export async function sendFinalQuizFailedEmail({
+  companyEmail,
+  companyName,
+  userName,
+  userEmail,
+  deptId,
+  attemptsUsed,
+  maxAttempts,
+  finalScore,
+}) {
+  try {
+    console.log("Email service: preparing final quiz failed email...");
+    const transporter = createTransporter();
+
+    const recipientEmail = companyEmail;
+    console.log(`Sending final quiz failed email to ${recipientEmail}`);
+
+    const mailOptions = {
+      from: {
+        name: "TrainMate",
+        address: "trainmate01@gmail.com",
+      },
+      to: recipientEmail,
+      subject: `Final Quiz Failed Alert - ${companyName}`,
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 640px; margin: 0 auto; padding: 20px; background-color: #f4f4f4;">
+          <div style="background-color: #031C3A; padding: 24px; text-align: center; border-radius: 10px 10px 0 0;">
+            <h1 style="color: #00FFFF; margin: 0; font-size: 24px;">TrainMate</h1>
+          </div>
+          <div style="background-color: white; padding: 24px; border-radius: 0 0 10px 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+            <h2 style="color: #031C3A; margin-top: 0;">Final Quiz Attempts Exhausted</h2>
+            <p style="color: #333; font-size: 15px; line-height: 1.6;">
+              A trainee has failed the final quiz and used all available attempts.
+            </p>
+            <div style="background-color: #FFF5F5; padding: 16px; border-left: 4px solid #FF6B6B; margin: 16px 0;">
+              <p style="margin: 6px 0; color: #333;"><strong>Company:</strong> ${companyName || "TrainMate"}</p>
+              <p style="margin: 6px 0; color: #333;"><strong>User:</strong> ${userName || "Unknown"}</p>
+              <p style="margin: 6px 0; color: #333;"><strong>User Email:</strong> ${userEmail || "Unknown"}</p>
+              <p style="margin: 6px 0; color: #333;"><strong>Department:</strong> ${deptId || "Unknown"}</p>
+              <p style="margin: 6px 0; color: #333;"><strong>Attempts Used:</strong> ${Number(attemptsUsed) || 0}/${Number(maxAttempts) || 0}</p>
+              <p style="margin: 6px 0; color: #333;"><strong>Latest Final Score:</strong> ${typeof finalScore === "number" && !Number.isNaN(finalScore) ? `${finalScore}%` : "N/A"}</p>
+            </div>
+            <p style="color: #333; font-size: 14px; line-height: 1.6;">
+              Please review the learner's progress and decide the next steps.
+            </p>
+            <p style="color: #666; font-size: 13px; line-height: 1.6; margin-top: 20px;">
+              Regards,<br>
+              <strong style="color: #031C3A;">TrainMate Team</strong>
+            </p>
+          </div>
+          <div style="text-align: center; padding: 16px; color: #666; font-size: 12px;">
+            <p>This is an automated message. Please do not reply.</p>
+          </div>
+        </div>
+      `,
+    };
+
+    const info = await transporter.sendMail(mailOptions);
+    console.log("Final quiz failed email sent:", info.messageId);
+    return { success: true, messageId: info.messageId };
+  } catch (error) {
+    console.error("Final quiz failed email failed:", error);
+    throw error;
+  }
+}
+
+
+/**
+ * Send user credentials email with PDF attachment
+ * @param {Object} params - Email parameters
+ * @param {string} params.userEmail - Recipient email
+ * @param {string} params.userName - User name
+ * @param {string} params.userId - User ID
+ * @param {string} params.companyName - Company name
+ * @param {Buffer} params.pdfBuffer - PDF buffer
+ */
+export async function sendUserCredentialsEmail({
+  userEmail,
+  userName,
+  userId,
+  companyName,
+  pdfBuffer,
+}) {
+  try {
+    const transporter = createTransporter();
+    const recipientEmail = userEmail;
+
+    const mailOptions = {
+      from: {
+        name: "TrainMate",
+        address: "trainmate01@gmail.com",
+      },
+      to: recipientEmail,
+      subject: `Your TrainMate Login Credentials - ${companyName}`,
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f4f4f4;">
+          <div style="background-color: #031C3A; padding: 24px; text-align: center; border-radius: 10px 10px 0 0;">
+            <h1 style="color: #00FFFF; margin: 0; font-size: 24px;">TrainMate</h1>
+          </div>
+          <div style="background-color: white; padding: 24px; border-radius: 0 0 10px 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+            <h2 style="color: #031C3A; margin-top: 0;">Welcome, ${userName}</h2>
+            <p style="color: #333; font-size: 15px; line-height: 1.6;">
+              Your TrainMate account has been created. Please find your login credentials attached as a PDF.
+            </p>
+            <p style="color: #333; font-size: 15px; line-height: 1.6;">
+              Use your google account and password to login to TrainMate system to start your learning.
+            </p>
+            <p style="color: #666; font-size: 13px; line-height: 1.6; margin-top: 20px;">
+              User ID: ${userId}
+            </p>
+            <p style="color: #666; font-size: 13px; line-height: 1.6; margin-top: 8px;">
+              Company: ${companyName}
+            </p>
+          </div>
+          <div style="text-align: center; padding: 16px; color: #666; font-size: 12px;">
+            <p>This is an automated message. Please do not reply.</p>
+          </div>
+        </div>
+      `,
+      attachments: [
+        {
+          filename: `TrainMate_Credentials_${userName.replace(/\s+/g, "_")}.pdf`,
+          content: pdfBuffer,
+          contentType: "application/pdf",
+        },
+      ],
+    };
+
+    const info = await transporter.sendMail(mailOptions);
+    console.log("Credentials email sent:", info.messageId);
+    return { success: true, messageId: info.messageId };
+  } catch (error) {
+    console.error("Credentials email failed:", error);
+    throw error;
+  }
+}
+
+/**
+ * Send daily module reminder email at 3pm
+ * @param {Object} params - Email parameters
+ * @param {string} params.userEmail - Recipient email
+ * @param {string} params.userName - User name
+ * @param {string} params.moduleTitle - Active module title
+ * @param {string} params.companyName - Company name
+ * @param {number} params.dayNumber - Day number of the module
+ */
+export async function sendDailyModuleReminderEmail({
+  userEmail,
+  userName,
+  moduleTitle,
+  companyName,
+  dayNumber,
+}) {
+  try {
+    console.log("📧 Sending daily module reminder email to:", userEmail);
+    const transporter = createTransporter();
+
+    const mailOptions = {
+      from: {
+        name: "TrainMate",
+        address: "trainmate01@gmail.com",
+      },
+      to: userEmail,
+      subject: `🎓 Daily Reminder: Continue Learning - ${moduleTitle}`,
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f4f4f4;">
+          <div style="background-color: #031C3A; padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
+            <h1 style="color: #00FFFF; margin: 0; font-size: 28px;">📚 TrainMate</h1>
+          </div>
+          
+          <div style="background-color: white; padding: 30px; border-radius: 0 0 10px 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+            <h2 style="color: #031C3A; margin-top: 0;">Hi ${userName},</h2>
+            
+            <p style="color: #333; font-size: 16px; line-height: 1.6;">
+              👋 This is your daily reminder to continue your learning journey!
+            </p>
+            
+            <div style="background-color: #E8F4F8; padding: 20px; border-left: 4px solid #00FFFF; margin: 20px 0;">
+              <h3 style="color: #031C3A; margin-top: 0;">📖 Your Active Module</h3>
+              <p style="margin: 5px 0; color: #333; font-size: 18px;">
+                <strong>${moduleTitle}</strong>
+              </p>
+              <p style="margin: 5px 0; color: #666;">
+                Day ${dayNumber} | ${companyName}
+              </p>
+            </div>
+            
+            <p style="color: #333; font-size: 16px; line-height: 1.6;">
+              Keep up the great work! 💪 Consistent learning is the key to mastering new skills.
+            </p>
+            
+            <div style="text-align: center; margin: 30px 0;">
+              <a href="http://localhost:3000" style="background-color: #00FFFF; color: #031C3A; padding: 15px 30px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;">
+                Continue Learning →
+              </a>
+            </div>
+            
+            <p style="color: #666; font-size: 14px; line-height: 1.6; margin-top: 30px;">
+              Best regards,<br>
+              <strong style="color: #031C3A;">TrainMate Team</strong><br>
+              Your AI-Powered Corporate Training Platform
+            </p>
+          </div>
+          
+          <div style="text-align: center; padding: 20px; color: #666; font-size: 12px;">
+            <p style="margin: 5px 0;">© 2024 TrainMate. All rights reserved.</p>
+            <p style="margin: 5px 0;">You're receiving this because you're enrolled in training at ${companyName}.</p>
+          </div>
+        </div>
+      `,
+    };
+
+    const info = await transporter.sendMail(mailOptions);
+    console.log("✅ Daily module reminder email sent:", info.messageId);
+    return { success: true, messageId: info.messageId };
+  } catch (error) {
+    console.error("❌ Daily module reminder email failed:", error);
+    throw error;
+  }
+}
+
+/**
+ * Send quiz unlock notification email
+ * @param {Object} params - Email parameters
+ * @param {string} params.userEmail - Recipient email
+ * @param {string} params.userName - User name
+ * @param {string} params.moduleTitle - Module title
+ * @param {string} params.companyName - Company name
+ * @param {string} params.quizDeadline - Quiz deadline (formatted string)
+ */
+export async function sendQuizUnlockEmail({
+  userEmail,
+  userName,
+  moduleTitle,
+  companyName,
+  quizDeadline,
+}) {
+  try {
+    console.log("📧 Sending quiz unlock email to:", userEmail);
+    const transporter = createTransporter();
+
+    const mailOptions = {
+      from: {
+        name: "TrainMate",
+        address: "trainmate01@gmail.com",
+      },
+      to: userEmail,
+      subject: `✅ Quiz Unlocked: ${moduleTitle} - Action Required!`,
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f4f4f4;">
+          <div style="background-color: #031C3A; padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
+            <h1 style="color: #00FFFF; margin: 0; font-size: 28px;">🎯 TrainMate</h1>
+          </div>
+          
+          <div style="background-color: white; padding: 30px; border-radius: 0 0 10px 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+            <h2 style="color: #031C3A; margin-top: 0;">Hi ${userName},</h2>
+            
+            <div style="text-align: center; padding: 20px; background-color: #E8FCE8; border-radius: 10px; margin: 20px 0;">
+              <h2 style="color: #00AA00; margin: 0; font-size: 24px;">🎉 Quiz Unlocked!</h2>
+            </div>
+            
+            <p style="color: #333; font-size: 16px; line-height: 1.6;">
+              Great news! Your quiz for <strong>${moduleTitle}</strong> has been unlocked and is ready for you to attempt.
+            </p>
+            
+            <div style="background-color: #FFF3CD; padding: 20px; border-left: 4px solid #FFC107; margin: 20px 0;">
+              <h3 style="color: #856404; margin-top: 0;">⏰ Important: Time-Limited</h3>
+              <p style="margin: 5px 0; color: #856404; font-size: 16px;">
+                <strong>Attempt your quiz within the given timeframe</strong> to progress to the next module.
+              </p>
+              ${quizDeadline ? `<p style="margin: 10px 0 5px 0; color: #856404;">Deadline: <strong>${quizDeadline}</strong></p>` : ''}
+            </div>
+            
+            <div style="background-color: #E8F4F8; padding: 20px; border-radius: 10px; margin: 20px 0;">
+              <h3 style="color: #031C3A; margin-top: 0;">📝 Quiz Details</h3>
+              <p style="margin: 5px 0; color: #333;">
+                <strong>Module:</strong> ${moduleTitle}
+              </p>
+              <p style="margin: 5px 0; color: #333;">
+                <strong>Company:</strong> ${companyName}
+              </p>
+            </div>
+            
+            <p style="color: #333; font-size: 16px; line-height: 1.6;">
+              📊 Test your knowledge and demonstrate what you've learned. Good luck! 🍀
+            </p>
+            
+            <div style="text-align: center; margin: 30px 0;">
+              <a href="http://localhost:3000" style="background-color: #00FFFF; color: #031C3A; padding: 15px 30px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block; font-size: 16px;">
+                Take Quiz Now →
+              </a>
+            </div>
+            
+            <p style="color: #666; font-size: 14px; line-height: 1.6; margin-top: 30px;">
+              Best regards,<br>
+              <strong style="color: #031C3A;">TrainMate Team</strong><br>
+              Your AI-Powered Corporate Training Platform
+            </p>
+          </div>
+          
+          <div style="text-align: center; padding: 20px; color: #666; font-size: 12px;">
+            <p style="margin: 5px 0;">© 2024 TrainMate. All rights reserved.</p>
+            <p style="margin: 5px 0;">You're receiving this because you're enrolled in training at ${companyName}.</p>
+          </div>
+        </div>
+      `,
+    };
+
+    const info = await transporter.sendMail(mailOptions);
+    console.log("✅ Quiz unlock email sent:", info.messageId);
+    return { success: true, messageId: info.messageId };
+  } catch (error) {
+    console.error("❌ Quiz unlock email failed:", error);
+    throw error;
+  }
+}
+
+/**
+ * Send admin regenerated roadmap email
+ */
+export async function sendAdminRegeneratedRoadmapEmail({
+  userEmail,
+  userName,
+  moduleTitle,
+  companyName,
+  companyEmail,
+}) {
+  try {
+    console.log("📧 Sending admin regenerated roadmap email to:", userEmail);
+    const transporter = createTransporter();
+
+    const mailOptions = {
+      from: {
+        name: companyName || "Learning Admin",
+        address: "trainmate01@gmail.com",
+      },
+      replyTo: companyEmail || "trainmate01@gmail.com",
+      to: userEmail,
+      subject: `🔄 Your Roadmap Has Been Regenerated - ${moduleTitle}`,
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f4f4f4;">
+          <div style="background-color: #031C3A; padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
+            <h1 style="color: #00FFFF; margin: 0; font-size: 28px;">🔄 ${companyName || "Learning Program"}</h1>
+          </div>
+          
+          <div style="background-color: white; padding: 30px; border-radius: 0 0 10px 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+            <h2 style="color: #031C3A; margin-top: 0;">Hi ${userName},</h2>
+            
+            <div style="text-align: center; padding: 20px; background-color: #E8F4F8; border-radius: 10px; margin: 20px 0;">
+              <h2 style="color: #0066CC; margin: 0; font-size: 24px;">🎯 Roadmap Regenerated!</h2>
+            </div>
+            
+            <p style="color: #333; font-size: 16px; line-height: 1.6;">
+              Your admin has regenerated your learning roadmap based on your recent progress and identified weaknesses.
+            </p>
+            
+            <div style="background-color: #E8FCE8; padding: 20px; border-left: 4px solid #00AA00; margin: 20px 0;">
+              <h3 style="color: #00AA00; margin-top: 0;">✨ What's New?</h3>
+              <p style="margin: 5px 0; color: #333;">
+                Your new roadmap for <strong>${moduleTitle}</strong> has been personalized to focus on areas that need improvement.
+              </p>
+              <p style="margin: 10px 0 5px 0; color: #333;">
+                This is an opportunity to strengthen your skills with a customized learning path!
+              </p>
+            </div>
+            
+            <div style="background-color: #FFF3CD; padding: 20px; border-radius: 10px; margin: 20px 0;">
+              <h3 style="color: #856404; margin-top: 0;">⏭️ Next Steps</h3>
+              <ul style="color: #856404; margin: 10px 0; padding-left: 20px;">
+                <li>Review your updated roadmap</li>
+                <li>Start with the new module content</li>
+                <li>Complete practice exercises</li>
+                <li>Prepare for your upcoming quiz</li>
+              </ul>
+            </div>
+            
+            <div style="background-color: #E8F4F8; padding: 20px; border-radius: 10px; margin: 20px 0;">
+              <h3 style="color: #031C3A; margin-top: 0;">📋 Details</h3>
+              <p style="margin: 5px 0; color: #333;">
+                <strong>Module:</strong> ${moduleTitle}
+              </p>
+              <p style="margin: 5px 0; color: #333;">
+                <strong>Company:</strong> ${companyName}
+              </p>
+            </div>
+            
+            <p style="color: #333; font-size: 16px; line-height: 1.6;">
+              This regeneration shows that your admin is invested in your learning success. Use this opportunity to master the skills! 💪
+            </p>
+            
+            <div style="text-align: center; margin: 30px 0;">
+              <a href="http://localhost:3000" style="background-color: #00FFFF; color: #031C3A; padding: 15px 30px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block; font-size: 16px;">
+                View Updated Roadmap →
+              </a>
+            </div>
+            
+            <p style="color: #666; font-size: 14px; line-height: 1.6; margin-top: 30px;">
+              Best regards,<br>
+              <strong style="color: #031C3A;">${companyName} - Learning & Development Team</strong>
+            </p>
+          </div>
+          
+          <div style="text-align: center; padding: 20px; color: #666; font-size: 12px;">
+            <p style="margin: 5px 0;">© 2024 ${companyName}. All rights reserved.</p>
+            <p style="margin: 5px 0;">You're receiving this because you're enrolled in the learning program at ${companyName}.</p>
+          </div>
+        </div>
+      `,
+    };
+
+    const info = await transporter.sendMail(mailOptions);
+    console.log("✅ Admin regenerated roadmap email sent:", info.messageId);
+    return { success: true, messageId: info.messageId };
+  } catch (error) {
+    console.error("❌ Admin regenerated roadmap email failed:", error);
+    throw error;
+  }
+}
+
+/**
+ * Send admin granted quiz attempts email
+ */
+export async function sendAdminGrantedAttemptsEmail({
+  userEmail,
+  userName,
+  moduleTitle,
+  attemptsGranted,
+  companyName,
+  companyEmail,
+}) {
+  try {
+    console.log("📧 Sending admin granted attempts email to:", userEmail);
+    const transporter = createTransporter();
+
+    const mailOptions = {
+      from: {
+        name: companyName || "Learning Admin",
+        address: "trainmate01@gmail.com",
+      },
+      replyTo: companyEmail || "trainmate01@gmail.com",
+      to: userEmail,
+      subject: `✅ Your Quiz Attempts Have Been Granted - ${moduleTitle}`,
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f4f4f4;">
+          <div style="background-color: #031C3A; padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
+            <h1 style="color: #00FFFF; margin: 0; font-size: 28px;">✅ ${companyName || "Learning Program"}</h1>
+          </div>
+          
+          <div style="background-color: white; padding: 30px; border-radius: 0 0 10px 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+            <h2 style="color: #031C3A; margin-top: 0;">Hi ${userName},</h2>
+            
+            <div style="text-align: center; padding: 20px; background-color: #E8FCE8; border-radius: 10px; margin: 20px 0;">
+              <h2 style="color: #00AA00; margin: 0; font-size: 24px;">🎉 Additional Attempts Granted!</h2>
+            </div>
+            
+            <p style="color: #333; font-size: 16px; line-height: 1.6;">
+              Good news! Your admin has granted you additional attempts for the quiz on <strong>${moduleTitle}</strong>.
+            </p>
+            
+            <div style="background-color: #E8FCE8; padding: 20px; border-left: 4px solid #00AA00; margin: 20px 0;">
+              <h3 style="color: #00AA00; margin-top: 0;">📊 Your Quiz Status</h3>
+              <p style="margin: 5px 0; color: #333; font-size: 18px;">
+                <strong>Attempts Granted:</strong> <span style="color: #00AA00; font-size: 24px;">${attemptsGranted}</span>
+              </p>
+              <p style="margin: 10px 0 5px 0; color: #333;">
+                This is your opportunity to improve your score. Make the most of it!
+              </p>
+            </div>
+            
+            <div style="background-color: #FFF3CD; padding: 20px; border-radius: 10px; margin: 20px 0;">
+              <h3 style="color: #856404; margin-top: 0;">⏭️ What to Do Next</h3>
+              <ul style="color: #856404; margin: 10px 0; padding-left: 20px;">
+                <li>Review the module content once more</li>
+                <li>Practice with the exercise materials</li>
+                <li>Take the quiz when you're ready</li>
+                <li>Aim to improve your previous score</li>
+              </ul>
+            </div>
+            
+            <div style="background-color: #E8F4F8; padding: 20px; border-radius: 10px; margin: 20px 0;">
+              <h3 style="color: #031C3A; margin-top: 0;">📋 Details</h3>
+              <p style="margin: 5px 0; color: #333;">
+                <strong>Module:</strong> ${moduleTitle}
+              </p>
+              <p style="margin: 5px 0; color: #333;">
+                <strong>Company:</strong> ${companyName}
+              </p>
+            </div>
+            
+            <p style="color: #333; font-size: 16px; line-height: 1.6;">
+              Your admin believes in your potential! Use these attempts to demonstrate your knowledge and move forward. 💪
+            </p>
+            
+            <div style="text-align: center; margin: 30px 0;">
+              <a href="http://localhost:3000" style="background-color: #00FFFF; color: #031C3A; padding: 15px 30px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block; font-size: 16px;">
+                Take Quiz Now →
+              </a>
+            </div>
+            
+            <p style="color: #666; font-size: 14px; line-height: 1.6; margin-top: 30px;">
+              Best regards,<br>
+              <strong style="color: #031C3A;">${companyName} - Learning & Development Team</strong>
+            </p>
+          </div>
+          
+          <div style="text-align: center; padding: 20px; color: #666; font-size: 12px;">
+            <p style="margin: 5px 0;">© 2024 ${companyName}. All rights reserved.</p>
+            <p style="margin: 5px 0;">You're receiving this because you're enrolled in the learning program at ${companyName}.</p>
+          </div>
+        </div>
+      `,
+    };
+
+    const info = await transporter.sendMail(mailOptions);
+    console.log("✅ Admin granted attempts email sent:", info.messageId);
+    return { success: true, messageId: info.messageId };
+  } catch (error) {
+    console.error("❌ Admin granted attempts email failed:", error);
+    throw error;
+  }
+}
+
+/**
+ * Generate company credentials PDF
+ */
+function generateCredentialsPDF(companyName, companyEmail, tempPassword) {
+  return new Promise((resolve, reject) => {
+    try {
+      const doc = new PDFDocument({ margin: 50, size: "A4" });
+      const buffers = [];
+
+      doc.on("data", buffers.push.bind(buffers));
+      doc.on("end", () => {
+        resolve(Buffer.concat(buffers));
+      });
+      doc.on("error", reject);
+
+      // Background
+      doc.save();
+      doc.rect(0, 0, doc.page.width, doc.page.height).fill("#031C3A");
+      doc.restore();
+
+      // Header
+      doc
+        .fontSize(28)
+        .fillColor("#00FFFF")
+        .text("TrainMate", { align: "center", y: 50 });
+
+      doc
+        .fontSize(14)
+        .fillColor("#ffffff")
+        .text("Company Login Credentials", { align: "center", y: 90 });
+
+      // Welcome section
+      doc
+        .fontSize(11)
+        .fillColor("#E8F7FF")
+        .text(
+          `Welcome to TrainMate, ${companyName}!`,
+          50,
+          150,
+          { width: 500 }
+        );
+
+      doc.moveTo(50, 190).lineTo(550, 190).stroke("#00FFFF");
+
+      // Credentials section with dark blue background
+      doc.save();
+      doc.rect(40, 200, 520, 140).fill("#031C3A");
+      doc.restore();
+
+      doc
+        .fontSize(12)
+        .fillColor("#00FFFF")
+        .text("Login Credentials", 50, 210);
+
+      doc
+        .fontSize(11)
+        .fillColor("#ffffff");
+
+      doc.text("Email Address:", 50, 240);
+      doc
+        .fontSize(10)
+        .fillColor("#7FFFD4")
+        .text(companyEmail, 70, 260, { underline: false });
+
+      doc
+        .fontSize(11)
+        .fillColor("#ffffff")
+        .text("Temporary Password:", 50, 290);
+      doc
+        .fontSize(10)
+        .fillColor("#7FFFD4")
+        .text(tempPassword, 70, 310, { underline: false });
+
+      // Instructions
+      doc.moveTo(50, 350).lineTo(550, 350).stroke("#00FFFF");
+
+      doc
+        .fontSize(12)
+        .fillColor("#00FFFF")
+        .text("Important Instructions", 50, 370);
+
+      doc
+        .fontSize(10)
+        .fillColor("#E8F7FF");
+
+      const instructions = [
+        "1. Log in using the email and password above",
+        "2. Change your password on first login (highly recommended)",
+        "3. Complete the onboarding process to set up your company profile",
+        "4. According to your active plan, you will have access to all systems",
+        "5. Contact support if you need any assistance",
+      ];
+
+      let yPosition = 395;
+      instructions.forEach((instruction) => {
+        doc.text(instruction, 60, yPosition);
+        yPosition += 20;
+      });
+
+      // Footer
+      doc.moveTo(50, 560).lineTo(550, 560).stroke("#00FFFF");
+
+      doc
+        .fontSize(9)
+        .fillColor("#9FC2DA")
+        .text(
+          "This document contains sensitive information. Keep it secure and do not share.",
+          50,
+          580,
+          { align: "center", width: 500 }
+        );
+
+      doc
+        .fontSize(8)
+        .fillColor("#7FA3BF")
+        .text(`Generated on ${new Date().toLocaleDateString()}`, 50, 700, {
+          align: "center",
+          width: 500,
+        });
+
+      doc.end();
+    } catch (error) {
+      reject(error);
+    }
+  });
+}
+
+/**
+ * Send company credentials email
+ */
+export async function sendCompanyCredentialsEmail({
+  companyEmail,
+  companyName,
+  tempPassword,
+}) {
+  try {
+    console.log("📧 Sending company credentials email to:", companyEmail);
+    const transporter = createTransporter();
+
+    // Generate credentials PDF
+    const credentialsPDF = await generateCredentialsPDF(
+      companyName,
+      companyEmail,
+      tempPassword
+    );
+
+    const mailOptions = {
+      from: {
+        name: "TrainMate Admin",
+        address: "trainmate01@gmail.com",
+      },
+      to: companyEmail,
+      subject: `🎯 Welcome to TrainMate, ${companyName}! - Your Account Credentials`,
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 700px; margin: 0 auto; padding: 20px; background-color: #f4f4f4;">
+          <div style="background-color: #031C3A; padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
+            <h1 style="color: #00FFFF; margin: 0; font-size: 32px;">🎓 Welcome to TrainMate</h1>
+            <p style="color: #7FFFD4; margin: 10px 0 0 0; font-size: 16px;">AI-Powered Corporate Training Platform</p>
+          </div>
+          
+          <div style="background-color: white; padding: 40px; border-radius: 0 0 10px 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+            <h2 style="color: #031C3A; margin: 0 0 10px 0; font-size: 26px;">Welcome to the TrainMate Family, ${companyName}!</h2>
+            
+            <p style="color: #555; font-size: 16px; line-height: 1.8; margin: 15px 0;">
+              We're thrilled to have you on board! We're excited to help your team grow through personalized, AI-powered training experiences. Our platform is designed to make corporate learning engaging, efficient, and results-driven.
+            </p>
+            
+            <div style="text-align: center; padding: 20px; background-color: #E8FCE8; border-radius: 10px; margin: 25px 0;">
+              <h2 style="color: #00AA00; margin: 0; font-size: 24px;">✅ Your Account is Ready!</h2>
+              <p style="color: #333; margin: 10px 0 0 0; font-size: 14px;">Complete details are securely attached as a PDF</p>
+            </div>
+            
+            <div style="background-color: #FFF3CD; padding: 20px; border-left: 4px solid #FF9800; margin: 25px 0;">
+              <h3 style="color: #856404; margin: 0 0 10px 0;"><strong>🔐 Security First - Your Credentials</strong></h3>
+              <p style="margin: 0; color: #333; font-size: 14px; line-height: 1.6;">
+                For your security, we've attached a PDF file containing your complete login credentials. This PDF is encrypted and should be stored securely. Please download and save it in a safe location.
+              </p>
+            </div>
+            
+            <div style="background-color: #E3F2FD; padding: 20px; border-radius: 10px; margin: 25px 0; border-left: 4px solid #2196F3;">
+              <h3 style="color: #1565C0; margin: 0 0 15px 0;"><strong>📋 Getting Started - The Onboarding Process</strong></h3>
+              <p style="color: #333; margin: 0 0 15px 0; font-size: 14px;">
+                Before you can start using the TrainMate system, you'll need to:
+              </p>
+              <ol style="color: #333; margin: 10px 0; padding-left: 20px; font-size: 14px; line-height: 1.8;">
+                <li><strong>Log in</strong> using your email and password from the attached PDF</li>
+                <li><strong>Change your password</strong> on first login (we highly recommend this for security)</li>
+                <li><strong>Complete the onboarding process</strong> - This will help us understand your company's needs and set up your profile</li>
+                <li><strong>Review your active plan</strong> - Different plans unlock different features and capabilities</li>
+              </ol>
+            </div>
+            
+            <div style="background-color: #F3E5F5; padding: 20px; border-radius: 10px; margin: 25px 0; border-left: 4px solid #9C27B0;">
+              <h3 style="color: #6A1B9A; margin: 0 0 15px 0;"><strong>🎯 Plan-Based Access</strong></h3>
+              <p style="color: #333; margin: 0; font-size: 14px; line-height: 1.8;">
+                According to your active plan, you will have access to specific features and modules. During onboarding, you'll see exactly which systems and tools are available to your organization. Our support team can help you upgrade your plan at any time if you need additional features.
+              </p>
+            </div>
+            
+            <div style="background-color: #FFF3E0; padding: 20px; border-radius: 10px; margin: 25px 0; border-left: 4px solid #FF6F00;">
+              <h3 style="color: #E65100; margin: 0 0 15px 0;"><strong>💡 Tips for Success</strong></h3>
+              <ul style="color: #333; margin: 0; padding-left: 20px; font-size: 14px; line-height: 1.8;">
+                <li>After login, customize your company profile to reflect your organization's values</li>
+                <li>Invite your team members and assign them to learning programs</li>
+                <li>Set up departments if needed for better organization</li>
+                <li>Explore the analytics dashboard to track progress in real-time</li>
+              </ul>
+            </div>
+            
+            <div style="background-color: #E0F2F1; padding: 20px; border-radius: 10px; margin: 25px 0; border-left: 4px solid #009688;">
+              <h3 style="color: #00695C; margin: 0 0 15px 0;"><strong>🌟 We'd Love Your Feedback</strong></h3>
+              <p style="color: #333; margin: 0 0 10px 0; font-size: 14px; line-height: 1.8;">
+                Your success is our success! As you explore TrainMate, please don't hesitate to share your feedback, suggestions, or any challenges you encounter. Your insights help us continuously improve the platform to better serve you.
+              </p>
+              <p style="color: #333; margin: 10px 0 0 0; font-size: 14px;">
+                <strong>Email us at:</strong> feedback@trainmate.com or support@trainmate.com
+              </p>
+            </div>
+            
+           
+            <hr style="border: none; border-top: 2px solid #00FFFF; margin: 30px 0;">
+            
+            <p style="color: #666; font-size: 14px; line-height: 1.8; margin: 20px 0;">
+              Best of luck! We're excited to be part of your organization's learning journey. 🎓<br><br>
+              <strong style="color: #031C3A;">Warm regards,<br>The TrainMate Team</strong><br>
+              <span style="color: #9C9C9C;">AI-Powered Corporate Training Platform</span>
+            </p>
+          </div>
+          
+          <div style="text-align: center; padding: 20px; color: #999; font-size: 12px;">
+            <p style="margin: 5px 0;">© 2024 TrainMate. All rights reserved.</p>
+            <p style="margin: 5px 0;">This is an automated message. For inquiries, please contact support@trainmate.com</p>
+          </div>
+        </div>
+      `,
+      attachments: [
+        {
+          filename: `${companyName}_TrainMate_Credentials.pdf`,
+          content: credentialsPDF,
+          contentType: "application/pdf",
+        },
+      ],
+    };
+
+    const info = await transporter.sendMail(mailOptions);
+    console.log("✅ Company credentials email sent with PDF attachment:", info.messageId);
+    return { success: true, messageId: info.messageId };
+  } catch (error) {
+    console.error("❌ Company credentials email failed:", error);
+    throw error;
+  }
+}
+
+/**
+ * Send company license renewal reminder/alert email to company admin
+ * @param {Object} params
+ * @param {string} params.companyEmail
+ * @param {string} params.companyId
+ * @param {string} params.companyName
+ * @param {string} params.licensePlan
+ * @param {Date|string|number} params.renewalDate
+ * @param {number} params.daysRemaining
+ * @param {string|null} [params.pendingLicensePlan]
+ */
+export async function sendCompanyLicenseRenewalAlertEmail({
+  companyEmail,
+  companyId,
+  companyName,
+  licensePlan,
+  renewalDate,
+  daysRemaining,
+  pendingLicensePlan = null,
+}) {
+  try {
+    if (!companyEmail) {
+      throw new Error("Company email is required for license renewal alert");
+    }
+
+    const transporter = createTransporter();
+    const renewalDateObj = renewalDate instanceof Date ? renewalDate : new Date(renewalDate);
+    const safeRenewalDate = Number.isNaN(renewalDateObj.getTime()) ? null : renewalDateObj;
+    const renewalText = safeRenewalDate
+      ? safeRenewalDate.toLocaleDateString("en-GB", {
+          day: "2-digit",
+          month: "short",
+          year: "numeric",
+        })
+      : "N/A";
+
+    const normalizedCurrentPlan =
+      licensePlan === "License Pro" || licensePlan === "License Basic"
+        ? licensePlan
+        : "License Basic";
+    const normalizedPendingPlan =
+      pendingLicensePlan === "License Pro" || pendingLicensePlan === "License Basic"
+        ? pendingLicensePlan
+        : null;
+
+    // Create review link to dedicated license review page.
+    const baseUrl = process.env.FRONTEND_URL || "http://localhost:3000";
+    const renewalLink = `${baseUrl}/company/license-review?companyId=${encodeURIComponent(companyId || "")}&companyName=${encodeURIComponent(companyName || "Company")}`;
+
+    let subject = `License renewal reminder - ${companyName || "TrainMate"}`;
+    let headline = "License renewal reminder";
+    let bodyText = `Your ${licensePlan || "active"} license is approaching renewal.`;
+    let urgencyLabel = "Upcoming renewal";
+    let urgencyBackground = "#E8F4F8";
+    let urgencyBorder = "#00FFFF";
+    let urgencyText = "#031C3A";
+
+    if (daysRemaining === 0) {
+      subject = `License renewal due today - ${companyName || "TrainMate"}`;
+      headline = "License renewal is due today";
+      bodyText = "Your license renewal date is today. Please renew to keep uninterrupted access.";
+      urgencyLabel = "Due today";
+      urgencyBackground = "#FFF1E8";
+      urgencyBorder = "#FF9E9E";
+      urgencyText = "#8A1F1F";
+    } else if (daysRemaining > 0) {
+      subject = `License renews in ${daysRemaining} day${daysRemaining === 1 ? "" : "s"} - ${companyName || "TrainMate"}`;
+      headline = `License renews in ${daysRemaining} day${daysRemaining === 1 ? "" : "s"}`;
+      bodyText = "Please renew your license before the renewal date to avoid service interruption.";
+      urgencyLabel = `${daysRemaining} day${daysRemaining === 1 ? "" : "s"} left`;
+      urgencyBackground = daysRemaining <= 2 ? "#FFF7E6" : "#E8F4F8";
+      urgencyBorder = daysRemaining <= 2 ? "#FFB84D" : "#00FFFF";
+      urgencyText = daysRemaining <= 2 ? "#8A4B00" : "#031C3A";
+    } else {
+      const overdueDays = Math.abs(daysRemaining);
+      subject = `License renewal overdue - ${companyName || "TrainMate"}`;
+      headline = `License renewal overdue by ${overdueDays} day${overdueDays === 1 ? "" : "s"}`;
+      bodyText = "Your renewal date has passed. Renew your license as soon as possible.";
+      urgencyLabel = `Overdue by ${overdueDays} day${overdueDays === 1 ? "" : "s"}`;
+      urgencyBackground = "#FFECEC";
+      urgencyBorder = "#FF6B6B";
+      urgencyText = "#8A1F1F";
+    }
+
+    const mailOptions = {
+      from: {
+        name: "TrainMate Billing",
+        address: "trainmate01@gmail.com",
+      },
+      to: companyEmail,
+      subject,
+      html: `
+        <div style="background: linear-gradient(180deg, #EEF8FF 0%, #F7FBFF 100%); padding: 24px 12px; font-family: Arial, Helvetica, sans-serif;">
+          <div style="max-width: 680px; margin: 0 auto; background: #ffffff; border: 1px solid #D7EAF5; border-radius: 20px; overflow: hidden; box-shadow: 0 10px 30px rgba(3, 28, 58, 0.08);">
+            <div style="background: linear-gradient(135deg, #031C3A 0%, #053A66 55%, #00A8B5 100%); padding: 28px 28px 24px; text-align: center;">
+              <div style="display: inline-block; padding: 6px 12px; border: 1px solid rgba(255,255,255,0.2); border-radius: 999px; color: #BFFBFF; font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; margin-bottom: 14px;">
+                TrainMate Billing
+              </div>
+              <h1 style="margin: 0; font-size: 28px; line-height: 1.2; color: #FFFFFF;">${headline}</h1>
+              <p style="margin: 10px 0 0; font-size: 15px; line-height: 1.6; color: rgba(255,255,255,0.88);">
+                Keep your company license active without interruption.
+              </p>
+            </div>
+
+            <div style="padding: 28px;">
+              <p style="margin: 0 0 10px; color: #031C3A; font-size: 16px; line-height: 1.6;">
+                Hi ${companyName || "Team"},
+              </p>
+              <p style="margin: 0 0 18px; color: #34495E; font-size: 15px; line-height: 1.7;">
+                ${bodyText}
+              </p>
+
+              <div style="display: inline-block; padding: 8px 14px; border-radius: 999px; background: ${urgencyBackground}; border: 1px solid ${urgencyBorder}; color: ${urgencyText}; font-size: 12px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 18px;">
+                ${urgencyLabel}
+              </div>
+
+              <div style="background: #F8FCFF; border: 1px solid #D7EAF5; border-radius: 16px; padding: 18px;">
+                <table style="width: 100%; border-collapse: collapse; font-size: 14px; color: #1F3449;">
+                  <tr>
+                    <td style="padding: 10px 0; width: 38%; color: #6A7D8F;">Company</td>
+                    <td style="padding: 10px 0; font-weight: 700;">${companyName || "N/A"}</td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 10px 0; width: 38%; color: #6A7D8F;">Current Plan</td>
+                    <td style="padding: 10px 0; font-weight: 700;">${normalizedCurrentPlan}</td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 10px 0; width: 38%; color: #6A7D8F;">Renewal Date</td>
+                    <td style="padding: 10px 0; font-weight: 700;">${renewalText}</td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 10px 0; width: 38%; color: #6A7D8F;">Days Remaining</td>
+                    <td style="padding: 10px 0; font-weight: 700;">${daysRemaining}</td>
+                  </tr>
+                </table>
+              </div>
+
+              <div style="margin-top: 14px; border: 1px solid #D7EAF5; border-radius: 14px; background: #FFFFFF; padding: 14px 16px;">
+                <p style="margin: 0 0 8px; color: #031C3A; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;">
+                  Renewal Actions
+                </p>
+                <p style="margin: 0; color: #34495E; font-size: 14px; line-height: 1.6;">
+                  • Renew now to continue with your current <strong>${normalizedCurrentPlan}</strong> plan.
+                </p>
+                <p style="margin: 8px 0 0; color: #34495E; font-size: 14px; line-height: 1.6;">
+                  • Want a different plan next cycle? Set your next-renewal plan in Company Details before payment.
+                </p>
+                ${normalizedPendingPlan
+                  ? `<p style="margin: 10px 0 0; color: #0D6246; font-size: 14px; line-height: 1.6; font-weight: 700;">Scheduled plan for next cycle: ${normalizedPendingPlan}</p>`
+                  : ""}
+              </div>
+
+              <div style="text-align: center; margin: 24px 0 8px;">
+                <a href="${renewalLink}" style="display: inline-block; background: linear-gradient(135deg, #00A8B5 0%, #0087A8 100%); color: #FFFFFF; text-decoration: none; font-weight: 700; font-size: 14px; padding: 12px 22px; border-radius: 999px; box-shadow: 0 8px 18px rgba(0, 168, 181, 0.22);">
+                  Review License Plan
+                </a>
+              </div>
+
+              <p style="margin: 18px 0 0; color: #5E6F80; font-size: 13px; line-height: 1.6; text-align: center;">
+                If you already renewed recently, you can ignore this message.
+              </p>
+            </div>
+
+            <div style="padding: 18px 28px 24px; text-align: center; border-top: 1px solid #E5F1F8; background: #FBFDFF;">
+              <p style="margin: 0; color: #6A7D8F; font-size: 12px; line-height: 1.6;">
+                This is an automated billing reminder. Please do not reply.
+              </p>
+              <p style="margin: 6px 0 0; color: #A0B1C0; font-size: 12px; line-height: 1.6;">
+                Regards, TrainMate Team
+              </p>
+            </div>
+          </div>
+        </div>
+      `,
+    };
+
+    const info = await transporter.sendMail(mailOptions);
+    console.log("✅ License renewal reminder email sent:", info.messageId, "to:", companyEmail);
+    return { success: true, messageId: info.messageId };
+  } catch (error) {
+    console.error("❌ License renewal reminder email failed:", {
+      companyEmail,
+      companyId,
+      errorMessage: error?.message,
+      errorCode: error?.code,
+      errorDetails: error?.response?.toString(),
+      fullError: error
+    });
+    throw error;
+  }
+}
+
+/**
+ * Send license renewal confirmation email
+ * @param {Object} params
+ * @param {string} params.companyEmail
+ * @param {string} params.companyName
+ * @param {string} params.licensePlan
+ * @param {Date} params.renewalDate
+ */
+export async function sendCompanyLicenseRenewalConfirmationEmail({
+  companyEmail,
+  companyName,
+  licensePlan,
+  renewalDate,
+}) {
+  try {
+    if (!companyEmail) {
+      throw new Error("Company email is required");
+    }
+
+    const transporter = createTransporter();
+    const renewalDateObj = renewalDate instanceof Date ? renewalDate : new Date(renewalDate);
+    const renewalText = renewalDateObj.toLocaleDateString("en-GB", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    });
+
+    const planLabel = licensePlan === "License Pro" ? "Pro" : "Basic";
+
+    const mailOptions = {
+      from: {
+        name: "TrainMate Billing",
+        address: "trainmate01@gmail.com",
+      },
+      to: companyEmail,
+      subject: `License Renewal Confirmed - ${companyName || "TrainMate"}`,
+      html: `
+        <div style="background: linear-gradient(180deg, #EEF8FF 0%, #F7FBFF 100%); padding: 24px 12px; font-family: Arial, Helvetica, sans-serif;">
+          <div style="max-width: 680px; margin: 0 auto; background: #ffffff; border: 1px solid #D7EAF5; border-radius: 20px; overflow: hidden; box-shadow: 0 10px 30px rgba(3, 28, 58, 0.08);">
+            <div style="background: linear-gradient(135deg, #031C3A 0%, #053A66 55%, #00A8B5 100%); padding: 28px 28px 24px; text-align: center;">
+              <div style="display: inline-block; padding: 6px 12px; border: 1px solid rgba(255,255,255,0.2); border-radius: 999px; color: #BFFBFF; font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; margin-bottom: 14px;">
+                ✓ License Renewed
+              </div>
+              <h1 style="margin: 0; font-size: 28px; line-height: 1.2; color: #FFFFFF;">License Renewal Successful</h1>
+              <p style="margin: 10px 0 0; font-size: 15px; line-height: 1.6; color: rgba(255,255,255,0.88);">Your TrainMate subscription is now active</p>
+            </div>
+
+            <div style="padding: 28px;">
+              <p style="margin: 0 0 10px; color: #031C3A; font-size: 16px; line-height: 1.6;">
+                Hi ${companyName || "Team"},
+              </p>
+              <p style="margin: 0 0 18px; color: #34495E; font-size: 15px; line-height: 1.7;">
+                Your license renewal has been successfully processed. Your TrainMate training platform will continue to operate without interruption.
+              </p>
+
+              <div style="background: #F8FCFF; border: 1px solid #D7EAF5; border-radius: 16px; padding: 18px;">
+                <table style="width: 100%; border-collapse: collapse; font-size: 14px; color: #1F3449;">
+                  <tr>
+                    <td style="padding: 10px 0; width: 38%; color: #6A7D8F;">License Plan</td>
+                    <td style="padding: 10px 0; font-weight: 700;">${planLabel} License</td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 10px 0; color: #6A7D8F;">Renewal Date</td>
+                    <td style="padding: 10px 0; font-weight: 700;">${renewalText}</td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 10px 0; color: #6A7D8F;">Status</td>
+                    <td style="padding: 10px 0; font-weight: 700; color: #00A852;">Active & Ready</td>
+                  </tr>
+                </table>
+              </div>
+
+              <div style="margin-top: 20px; padding: 14px 16px; border: 1px solid #D7EAF5; border-radius: 14px; background: #FFFFFF;">
+                <p style="margin: 0 0 8px; color: #031C3A; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;">
+                  Next Steps
+                </p>
+                <p style="margin: 0; color: #34495E; font-size: 14px; line-height: 1.6;">
+                  Your training modules, freshers, and all features are now available. You can continue managing your team and training programs seamlessly.
+                </p>
+              </div>
+
+              <div style="text-align: center; margin: 24px 0 8px;">
+                <a href="https://trainmate.com" style="display: inline-block; background: linear-gradient(135deg, #00A8B5 0%, #0087A8 100%); color: #FFFFFF; text-decoration: none; font-weight: 700; font-size: 14px; padding: 12px 22px; border-radius: 999px; box-shadow: 0 8px 18px rgba(0, 168, 181, 0.22);">
+                  Go to Dashboard
+                </a>
+              </div>
+
+              <p style="margin: 18px 0 0; color: #5E6F80; font-size: 13px; line-height: 1.6; text-align: center;">
+                Thank you for using TrainMate. We're committed to supporting your training needs.
+              </p>
+            </div>
+
+            <div style="padding: 18px 28px 24px; text-align: center; border-top: 1px solid #E5F1F8; background: #FBFDFF;">
+              <p style="margin: 0; color: #6A7D8F; font-size: 12px; line-height: 1.6;">
+                This is an automated confirmation. Please do not reply.
+              </p>
+              <p style="margin: 6px 0 0; color: #A0B1C0; font-size: 12px; line-height: 1.6;">
+                Regards, TrainMate Team
+              </p>
+            </div>
+          </div>
+        </div>
+      `,
+    };
+
+    const info = await transporter.sendMail(mailOptions);
+    console.log("License renewal confirmation email sent:", info.messageId);
+    return { success: true, messageId: info.messageId };
+  } catch (error) {
+    console.error("License renewal confirmation email failed:", error);
+    throw error;
+  }
+}

@@ -1,0 +1,81 @@
+import { BrowserRouter, Routes, Route } from "react-router-dom";
+import AdminDashboard from "./components/superadminpanel/AdminDashboard";
+import Home from "./components/landingpage/Home";
+import License from "./components/landingpage/License";
+import ComparePlans from "./components/landingpage/ComparePlans";
+import CompanyDashboard from "./components/CompanySpecific/CompanyDashboard";
+import ManageDepartments from "./components/CompanySpecific/ManageDepartments";
+import DepartmentDetails from "./components/CompanySpecific/DepartmentDetails";
+import FresherDashboard from "./components/Fresher/FresherDashboard";
+import FresherSettings from "./components/Fresher/FresherSettings";
+import UserProfile from "./components/CompanySpecific/UserProfile";
+import Manageuser from "./components/CompanySpecific/Manageuser";
+import CompanySettings from "./components/CompanySpecific/CompanySettings";
+import CompanyDetails from "./components/CompanySpecific/CompanyDetails";
+import CompanyNotifications from "./components/CompanySpecific/CompanyNotifications";
+import CompanyLicensePayment from "./components/CompanySpecific/CompanyLicensePayment";
+import CompanyLicenseRenewal from "./components/CompanySpecific/CompanyLicenseRenewal";
+import CompanyLicenseReview from "./components/CompanySpecific/CompanyLicenseReview";
+import FresherTraining from "./components/Fresher/FresherTraining";
+import FresherProgress from "./components/Fresher/FresherProgress";
+import Roadmap from "./components/Fresher/Roadmap";
+import Chatbot from "./components/Fresher/Chatbot";
+import About from "./components/Fresher/About";
+
+import PreviousChats from "./components/Fresher/PreviousChats";
+import ProgressDetails from "./components/CompanySpecific/ProgressDetails";
+import ViewModuleDetails from "./components/Fresher/ViewModuleDetails";
+import ModuleQuiz from "./components/Fresher/ModuleQuiz";
+import ModuleQuizResults from "./components/Fresher/ModuleQuizResults";
+import Certificate from "./components/Fresher/Certificate";
+import FinalQuizInstructions from "./components/Fresher/FinalQuizInstructions";
+import FinalQuiz from "./components/Fresher/FinalQuiz";
+import FinalQuizResults from "./components/Fresher/FinalQuizResults";
+import TrainingLockedScreen from "./components/Fresher/TrainingLockedScreen";
+import GoogleAuthCallback from "./pages/GoogleAuthCallback";
+import CompanyGoogleAuthCallback from "./pages/CompanyGoogleAuthCallback";
+
+export default function App() {
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<Home />} />
+        <Route path="/auth/google/callback" element={<GoogleAuthCallback />} />
+        <Route path="/auth/company-google-callback" element={<CompanyGoogleAuthCallback />} />
+        <Route path="/license" element={<License />} />
+        <Route path="/compare-plans" element={<ComparePlans />} />
+        <Route path="/super-admin-dashboard" element={<AdminDashboard />} /> 
+        <Route path="/company-dashboard" element={<CompanyDashboard />} />  
+        <Route path="/manage-departments" element={<ManageDepartments />} /> 
+        <Route path="/departments/:deptId" element={<DepartmentDetails />} />
+        <Route path="/fresher-dashboard" element={<FresherDashboard />} /> 
+        <Route path="/fresher-settings" element={<FresherSettings />} />
+        <Route path="/user-profile/:companyId/:deptId/:userId" element={<UserProfile />} />
+        <Route path="/CompanySpecific/Manageuser" element={<Manageuser />} />
+        <Route path="/CompanySpecific/CompanyDashboard" element={<CompanyDashboard />} />
+        <Route path="/CompanySpecific/CompanySettings" element={<CompanySettings />} />
+        <Route path="/CompanySpecific/CompanyNotifications" element={<CompanyNotifications />} />
+        <Route path="/fresher-training/:companyId/:deptId/:userId" element={<FresherTraining />}  />
+        <Route path="/fresher-progress" element={<FresherProgress />} />
+        <Route path="/roadmap/:companyId/:deptId/:userId/:companyName" element={<Roadmap />} /> 
+        <Route path="/chatbot" element={<Chatbot />} />
+        <Route path="/about" element={<About />} />
+        <Route path="/certificate" element={<Certificate />} />
+      
+        <Route path="/previous-chats" element={<PreviousChats />} />
+        <Route path="/progress-details/:companyId/:deptName/:userId" element={<ProgressDetails />} />
+        <Route path="/module-details/:companyId/:deptId/:userId/:moduleId/:companyName" element={<ViewModuleDetails />} />
+        <Route path="/quiz/:companyId/:deptId/:userId/:moduleId" element={<ModuleQuiz />} />
+        <Route path="/quiz-results/:companyId/:deptId/:userId/:moduleId" element={<ModuleQuizResults />} />
+        <Route path="/final-quiz-instructions/:companyId/:deptId/:userId/:companyName" element={<FinalQuizInstructions />} />
+        <Route path="/final-quiz/:companyId/:deptId/:userId/:companyName" element={<FinalQuiz />} />
+        <Route path="/final-quiz-results/:companyId/:deptId/:userId/:companyName" element={<FinalQuizResults />} />
+        <Route path="/training-locked" element={<TrainingLockedScreen />} />
+        <Route path="/CompanySpecific/CompanyDetails" element={<CompanyDetails />} />
+        <Route path="/company/license-review" element={<CompanyLicenseReview />} />
+        <Route path="/company-license-payment" element={<CompanyLicensePayment />} />
+        <Route path="/company/renew-license" element={<CompanyLicenseRenewal />} />
+      </Routes>
+    </BrowserRouter>
+  );
+}

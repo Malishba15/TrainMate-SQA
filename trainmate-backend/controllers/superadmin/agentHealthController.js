@@ -1,0 +1,554 @@
+let agentsInitialized = false;
+
+async function loadOrchestratorDependencies() {
+  try {
+    const [{ orchestrator }, { initializeAgentRegistry }] = await Promise.all([
+      import("../../services/agentOrchestrator.service.js"),
+      import("../../services/agentRegistry.js"),
+    ]);
+
+    return { orchestrator, initializeAgentRegistry };
+  } catch (error) {
+    // Keep endpoint usable even when orchestrator dependencies cannot boot.
+    return {
+      orchestrator: null,
+      initializeAgentRegistry: null,
+      loadError: error,
+    };
+  }
+}
+
+async function ensureAgentsInitialized(initializeAgentRegistry) {
+  if (!initializeAgentRegistry) return;
+
+  if (!agentsInitialized) {
+    initializeAgentRegistry();
+    agentsInitialized = true;
+  }
+}
+
+const AGENT_CATALOG = [
+  {
+    key: "extract-cv-skills",
+    name: "CV Skills Agent",
+    segment: "Fresher",
+    type: "orchestrator-registered",
+    source: "roadmap",
+  },
+  {
+    key: "extract-company-skills",
+    name: "Company Skills Agent",
+    segment: "Company",
+    type: "orchestrator-registered",
+    source: "roadmap",
+  },
+  {
+    key: "analyze-skill-gaps",
+    name: "Gap Analysis Agent",
+    segment: "Fresher",
+    type: "orchestrator-registered",
+    source: "roadmap",
+  },
+  {
+    key: "plan-retrieval",
+    name: "Planning Agent",
+    segment: "Shared",
+    type: "orchestrator-registered",
+    source: "roadmap",
+  },
+  {
+    key: "retrieve-documents",
+    name: "Retrieval Agent",
+    segment: "Company",
+    type: "orchestrator-registered",
+    source: "roadmap",
+  },
+  {
+    key: "generate-roadmap",
+    name: "Roadmap Generation Agent",
+    segment: "Fresher",
+    type: "orchestrator-registered",
+    source: "roadmap",
+  },
+  {
+    key: "validate-roadmap",
+    name: "Validation Agent",
+    segment: "Shared",
+    type: "orchestrator-registered",
+    source: "roadmap",
+  },
+  {
+    key: "quiz-planning-agent",
+    name: "Quiz Planning Agent",
+    segment: "Fresher",
+    type: "function-agent",
+    source: "quiz",
+  },
+  {
+    key: "quiz-decision-agent",
+    name: "Quiz Decision Agent",
+    segment: "Fresher",
+    type: "function-agent",
+    source: "quiz",
+  },
+  {
+    key: "daily-agenda-agent",
+    name: "Daily Agenda Agent",
+    segment: "Fresher",
+    type: "function-agent",
+    source: "chat",
+  },
+  {
+    key: "knowledge-fetch-agent",
+    name: "Knowledge Fetch Agent",
+    segment: "Fresher",
+    type: "function-agent",
+    source: "chat",
+  },
+  {
+    key: "company-fresher-chat-agent",
+    name: "Company Fresher Chat Agent",
+    segment: "Company",
+    type: "function-agent",
+    source: "company-chat",
+  },
+  {
+    key: "notification-strategy-agent",
+    name: "Notification Strategy Agent",
+    segment: "Company",
+    type: "function-agent",
+    source: "notifications",
+  },
+  {
+    key: "notification-content-agent",
+    name: "Notification Content Agent",
+    segment: "Company",
+    type: "function-agent",
+    source: "notifications",
+  },
+];
+
+function round(value, digits = 1) {
+  if (value == null || Number.isNaN(Number(value))) return null;
+  const factor = Math.pow(10, digits);
+  return Math.round(Number(value) * factor) / factor;
+}
+
+function toStatus({ accuracy, successRate, hasRuntimeData }) {
+  if (!hasRuntimeData) return "no-data";
+
+  const a = Number(accuracy || 0);
+  const s = Number(successRate || 0);
+  const blended = a * 0.7 + s * 0.3;
+
+  if (blended >= 85) return "healthy";
+  if (blended >= 70) return "warning";
+  return "critical";
+}
+
+function deriveAccuracy({ type, validationCount, totalValidationScore, successes, runs }) {
+  const totalRuns = Number(runs || 0);
+  const totalSuccesses = Number(successes || 0);
+  const count = Number(validationCount || 0);
+
+  if (count > 0) {
+    return round(totalValidationScore / count, 1);
+  }
+
+  if (totalRuns > 0 && type === "function-agent") {
+    // Function-agents usually do not emit validation scores; use success-rate as operational accuracy.
+    return round((totalSuccesses / totalRuns) * 100, 1);
+  }
+
+  return null;
+}
+
+function aggregateRuntimeMetrics(history) {
+  const metricsMap = new Map();
+
+  for (const execution of history) {
+    const stepLog = execution?.executionResults?.executionLog;
+    if (!Array.isArray(stepLog)) continue;
+
+    for (const step of stepLog) {
+      if (!step?.agent) continue;
+      if (!metricsMap.has(step.agent)) {
+        metricsMap.set(step.agent, {
+          runs: 0,
+          successes: 0,
+          totalValidationScore: 0,
+          validationCount: 0,
+          totalDurationMs: 0,
+          durationCount: 0,
+          lastRunAt: null,
+          lastError: null,
+        });
+      }
+
+      const current = metricsMap.get(step.agent);
+      current.runs += 1;
+
+      if (step.status === "SUCCESS") {
+        current.successes += 1;
+      } else if (step.status === "FAILED") {
+        current.lastError = step.reason || "Step failed";
+      }
+
+      const validationScore = step?.validation?.score;
+      if (typeof validationScore === "number") {
+        current.totalValidationScore += validationScore;
+        current.validationCount += 1;
+      }
+
+      if (typeof step.duration === "number") {
+        current.totalDurationMs += step.duration;
+        current.durationCount += 1;
+      }
+
+      const executionTimestamp = execution?.timestamp
+        ? new Date(execution.timestamp)
+        : null;
+      if (executionTimestamp && !Number.isNaN(executionTimestamp.getTime())) {
+        current.lastRunAt = executionTimestamp.toISOString();
+      }
+    }
+  }
+
+  return metricsMap;
+}
+
+function aggregatePlannerMetrics(history) {
+  const totals = {
+    runs: 0,
+    llmRuns: 0,
+    fallbackRuns: 0,
+  };
+
+  for (const execution of history) {
+    const mode = String(execution?.plannerMode || execution?.metadata?.plannerMode || "").toLowerCase();
+    if (!mode) continue;
+
+    totals.runs += 1;
+    if (mode === "fallback") totals.fallbackRuns += 1;
+    if (mode === "llm") totals.llmRuns += 1;
+  }
+
+  const fallbackRate = totals.runs > 0 ? round((totals.fallbackRuns / totals.runs) * 100, 1) : null;
+  return {
+    ...totals,
+    fallbackRate,
+    llmRate: totals.runs > 0 ? round((totals.llmRuns / totals.runs) * 100, 1) : null,
+  };
+}
+
+function buildAgentRows(catalog, runtimeMap) {
+  return catalog.map((entry) => {
+    const runtime = runtimeMap.get(entry.key);
+    const hasRuntimeData = Boolean(runtime && runtime.runs > 0);
+
+    const runs = hasRuntimeData ? runtime.runs : 0;
+    const successRate = hasRuntimeData && runtime.runs
+      ? round((runtime.successes / runtime.runs) * 100, 1)
+      : null;
+
+    const accuracy = hasRuntimeData
+      ? deriveAccuracy({
+          type: entry.type,
+          validationCount: runtime.validationCount,
+          totalValidationScore: runtime.totalValidationScore,
+          successes: runtime.successes,
+          runs: runtime.runs,
+        })
+      : null;
+
+    const avgLatencyMs = hasRuntimeData && runtime.durationCount
+      ? Math.round(runtime.totalDurationMs / runtime.durationCount)
+      : null;
+
+    const status = toStatus({ accuracy, successRate, hasRuntimeData });
+
+    return {
+      id: entry.key,
+      key: entry.key,
+      name: entry.name,
+      segment: entry.segment,
+      type: entry.type,
+      source: entry.source,
+      runs,
+      successRate,
+      accuracy,
+      avgLatencyMs,
+      lastRunAt: hasRuntimeData ? runtime.lastRunAt : null,
+      lastError: hasRuntimeData ? runtime.lastError : null,
+      hasRuntimeData,
+      status,
+    };
+  });
+}
+
+function summarizeRows(agentRows) {
+  const withData = agentRows.filter((a) => a.hasRuntimeData);
+
+  const avgAccuracy = withData.length
+    ? round(
+        withData.reduce((sum, item) => sum + (item.accuracy || 0), 0) /
+          withData.length,
+        1
+      )
+    : null;
+
+  const avgSuccessRate = withData.length
+    ? round(
+        withData.reduce((sum, item) => sum + (item.successRate || 0), 0) /
+          withData.length,
+        1
+      )
+    : null;
+
+  const avgLatencyMs = withData.length
+    ? Math.round(
+        withData.reduce((sum, item) => sum + (item.avgLatencyMs || 0), 0) /
+          withData.length
+      )
+    : null;
+
+  const statusCounts = agentRows.reduce(
+    (acc, item) => {
+      acc[item.status] = (acc[item.status] || 0) + 1;
+      return acc;
+    },
+    { healthy: 0, warning: 0, critical: 0, "no-data": 0 }
+  );
+
+  const segmentNames = ["Fresher", "Company", "Shared"];
+  const segments = segmentNames.map((segment) => {
+    const segmentRows = agentRows.filter((a) => a.segment === segment);
+    const segmentWithData = segmentRows.filter((a) => a.hasRuntimeData);
+
+    return {
+      name: segment,
+      agentCount: segmentRows.length,
+      withRuntimeData: segmentWithData.length,
+      avgAccuracy: segmentWithData.length
+        ? round(
+            segmentWithData.reduce((sum, item) => sum + (item.accuracy || 0), 0) /
+              segmentWithData.length,
+            1
+          )
+        : null,
+      avgSuccessRate: segmentWithData.length
+        ? round(
+            segmentWithData.reduce((sum, item) => sum + (item.successRate || 0), 0) /
+              segmentWithData.length,
+            1
+          )
+        : null,
+      healthyCount: segmentRows.filter((a) => a.status === "healthy").length,
+      warningCount: segmentRows.filter((a) => a.status === "warning").length,
+      criticalCount: segmentRows.filter((a) => a.status === "critical").length,
+      noDataCount: segmentRows.filter((a) => a.status === "no-data").length,
+    };
+  });
+
+  const alerts = agentRows
+    .filter((a) => a.status === "critical" || a.status === "warning")
+    .sort((a, b) => {
+      if (a.status === b.status) return (a.accuracy || 999) - (b.accuracy || 999);
+      return a.status === "critical" ? -1 : 1;
+    })
+    .slice(0, 8)
+    .map((item) => ({
+      agentKey: item.key,
+      agentName: item.name,
+      segment: item.segment,
+      status: item.status,
+      accuracy: item.accuracy,
+      successRate: item.successRate,
+      reason: item.lastError || "Lower than expected quality indicators",
+    }));
+
+  return {
+    kpis: {
+      totalAgents: agentRows.length,
+      instrumentedAgents: withData.length,
+      avgAccuracy,
+      avgSuccessRate,
+      avgLatencyMs,
+      healthyAgents: statusCounts.healthy,
+      warningAgents: statusCounts.warning,
+      criticalAgents: statusCounts.critical,
+      noDataAgents: statusCounts["no-data"],
+    },
+    segments,
+    alerts,
+  };
+}
+
+export async function getSuperAdminAgentHealth(req, res) {
+  try {
+    const { orchestrator, initializeAgentRegistry, loadError } =
+      await loadOrchestratorDependencies();
+
+    await ensureAgentsInitialized(initializeAgentRegistry);
+
+    const historyLimit = Math.min(Math.max(Number(req.query.limit) || 100, 10), 300);
+    const history = orchestrator ? orchestrator.getExecutionHistory(historyLimit) : [];
+
+    const runtimeMap = aggregateRuntimeMetrics(history);
+    const plannerMetrics = aggregatePlannerMetrics(history);
+    const agentRows = buildAgentRows(AGENT_CATALOG, runtimeMap);
+
+    const {
+      storeAgentHealthMetadata,
+      getLatestAgentHealthMetadata,
+      getAgentRunMetadata,
+      flushQueuedAgentRunMetadataNow,
+    } = await import("../../services/agentHealthStorage.service.js");
+
+    // Force-flush in-memory run counters so dashboard reads the freshest DB view.
+    await flushQueuedAgentRunMetadataNow();
+
+    const persistedRunsResult = await getAgentRunMetadata(
+      AGENT_CATALOG.map((agent) => agent.key)
+    );
+
+    if (persistedRunsResult.success && Array.isArray(persistedRunsResult.data)) {
+      const runMap = new Map(
+        persistedRunsResult.data.map((row) => [String(row.agentKey || ""), row])
+      );
+
+      for (const row of agentRows) {
+        const persisted = runMap.get(String(row.key || ""));
+        if (!persisted) continue;
+
+        const persistedTotalRuns = Number(persisted.totalRuns || 0);
+        const persistedSuccessRuns = Number(persisted.successRuns || 0);
+        const persistedDegradedRuns = Number(persisted.degradedRuns || 0);
+        const hasPersistedValidationScore =
+          persisted.lastValidationScore !== null &&
+          persisted.lastValidationScore !== undefined &&
+          persisted.lastValidationScore !== "" &&
+          Number.isFinite(Number(persisted.lastValidationScore));
+        const persistedLastValidationScore = hasPersistedValidationScore
+          ? Number(persisted.lastValidationScore)
+          : null;
+        const hasPersistedDuration =
+          persisted.lastDurationMs !== null &&
+          persisted.lastDurationMs !== undefined &&
+          persisted.lastDurationMs !== "" &&
+          Number.isFinite(Number(persisted.lastDurationMs));
+        const persistedLastDurationMs = hasPersistedDuration
+          ? Number(persisted.lastDurationMs)
+          : null;
+
+        if (Number.isFinite(persistedTotalRuns) && persistedTotalRuns > Number(row.runs || 0)) {
+          row.runs = persistedTotalRuns;
+        }
+
+        if ((row.successRate == null || !Number.isFinite(Number(row.successRate))) && persistedTotalRuns > 0) {
+          row.successRate = round((persistedSuccessRuns / persistedTotalRuns) * 100, 1);
+        }
+
+        if (
+          (row.accuracy == null || !Number.isFinite(Number(row.accuracy))) &&
+          persistedLastValidationScore != null
+        ) {
+          row.accuracy = round(persistedLastValidationScore, 1);
+        }
+
+        if (
+          (row.accuracy == null || !Number.isFinite(Number(row.accuracy))) &&
+          row.type === "function-agent" &&
+          persistedTotalRuns > 0
+        ) {
+          const weightedOperationalScore =
+            ((persistedSuccessRuns + persistedDegradedRuns * 0.7) / persistedTotalRuns) * 100;
+          row.accuracy = round(weightedOperationalScore, 1);
+        }
+
+        if (
+          (row.avgLatencyMs == null || !Number.isFinite(Number(row.avgLatencyMs))) &&
+          persistedLastDurationMs != null
+        ) {
+          row.avgLatencyMs = Math.round(persistedLastDurationMs);
+        }
+
+        if (!row.lastRunAt && persisted.lastRunAt) {
+          row.lastRunAt = persisted.lastRunAt;
+        }
+
+        if (!row.lastError && persisted.lastStatus && String(persisted.lastStatus).toLowerCase() === "failed") {
+          row.lastError = "Most recent persisted run failed";
+        }
+
+        if (!row.hasRuntimeData && Number.isFinite(persistedTotalRuns) && persistedTotalRuns > 0) {
+          row.hasRuntimeData = true;
+        }
+
+        row.status = toStatus({
+          accuracy: row.accuracy,
+          successRate: row.successRate,
+          hasRuntimeData: row.hasRuntimeData,
+        });
+      }
+    }
+
+    const summary = summarizeRows(agentRows);
+    const hasRuntimeMetrics = agentRows.some((a) => a.hasRuntimeData);
+
+    // Store compact metadata only (throttled) to avoid DB bombardment.
+    if (hasRuntimeMetrics) {
+      await storeAgentHealthMetadata({
+        ...summary,
+        planner: plannerMetrics,
+        runtimeAvailable: Boolean(orchestrator),
+        historyWindow: history.length,
+      });
+    }
+
+    // If no runtime data, try to get latest stored snapshot as fallback
+    let finalData = {
+      success: true,
+      generatedAt: new Date().toISOString(),
+      historyWindow: history.length,
+      runtimeAvailable: Boolean(orchestrator),
+      runtimeMessage: orchestrator
+        ? "Runtime metrics loaded from orchestrator history"
+        : `Runtime metrics unavailable (${loadError?.message || "orchestrator not initialized"})`,
+      ...summary,
+      planner: plannerMetrics,
+      agents: agentRows,
+      dataSource: "runtime",
+    };
+
+    // If no runtime data available, use stored data as fallback
+    if (!orchestrator || !hasRuntimeMetrics) {
+      const storedResult = await getLatestAgentHealthMetadata();
+      const stored = storedResult?.data;
+      const hasStoredKpis = stored?.kpis && typeof stored.kpis === "object";
+
+      if (storedResult.success && hasStoredKpis) {
+        finalData = {
+          ...finalData,
+          kpis: stored.kpis || finalData.kpis,
+          planner: stored.planner || finalData.planner,
+          dataSource: "stored",
+          runtimeMessage: `Using stored snapshot from ${stored.timestamp || "previous run"}`,
+        };
+      } else {
+        finalData.runtimeMessage =
+          finalData.runtimeMessage ||
+          "Runtime unavailable and no valid stored snapshot found";
+      }
+    }
+
+    return res.status(200).json(finalData);
+  } catch (error) {
+    console.error("Error building super admin agent health:", error);
+    return res.status(500).json({
+      success: false,
+      error: "Failed to build agent health dashboard data",
+      details: error.message,
+    });
+  }
+}
