@@ -1,3 +1,4 @@
+//totalcompaniesController.js
 import { db,admin } from "../../config/firebase.js";
 
     // ✅ Total companies count

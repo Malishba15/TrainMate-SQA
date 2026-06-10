@@ -1,3 +1,4 @@
+// totalsuperAdminsController.js
 import { db ,admin} from "../../config/firebase.js";
 // ✅ Total super admins
 export const getTotalSuperAdmins = async (req, res) => {

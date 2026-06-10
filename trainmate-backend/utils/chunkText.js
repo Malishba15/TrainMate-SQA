@@ -1,3 +1,4 @@
+//trainmate-backend/utils/chunkText.js
 export const chunkText = (text, size = 400, overlap = 50) => {
   const words = text.split(" ");
   const chunks = [];

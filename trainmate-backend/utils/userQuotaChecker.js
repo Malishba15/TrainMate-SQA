@@ -1,3 +1,4 @@
+//trainmate-backend/utils/userQuotaChecker.js
 // Utility to check if company can add more users based on their plan
 import { getFirestore } from "firebase-admin/firestore";
 

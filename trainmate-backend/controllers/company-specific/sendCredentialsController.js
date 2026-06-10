@@ -1,3 +1,4 @@
+// sendCredentialsController.js
 import { generateUserCredentialsPDF } from "../../services/pdfService.js";
 import { sendUserCredentialsEmail } from "../../services/emailService.js";
 

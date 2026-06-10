@@ -1,3 +1,4 @@
+//cohere.js
 import { CohereClient } from "cohere-ai";
 
 let cohereClient;

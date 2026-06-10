@@ -1,3 +1,4 @@
+//trainmate-backend/controllers/QuizController.js
 import admin from "firebase-admin";
 import { db } from "../config/firebase.js";
 import { getPineconeIndex } from "../config/pinecone.js";

@@ -1,4 +1,4 @@
-// Controller to check user quota for a company
+// userQuotaController.js
 import { checkUserQuota } from "../../utils/userQuotaChecker.js";
 
 /**

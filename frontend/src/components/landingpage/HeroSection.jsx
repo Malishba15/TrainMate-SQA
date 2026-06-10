@@ -19,11 +19,12 @@ export default function HeroSection({ onLearnMoreClick, onGetStartedClick }) {
               <span>AI-Powered Training Assistant</span>
             </div>
 
-            <h1 className="text-5xl font-bold text-[#]">     
-              Smarter Onboarding,{' '}
-             <h1 className="text-5xl font-bold text-[#00FFFF]"> Smarter Teams </h1>
-              
-            </h1>
+            <h1 className="text-5xl font-bold">
+  Smarter Onboarding,{" "}
+  <span className="text-[#00FFFF]">
+    Smarter Teams
+  </span>
+</h1>
 
             <p className="text-lg text-gray-200 max-w-lg leading-relaxed">
               <span className="text-[#00FFFF] font-semibold">TrainMate</span> simplifies onboarding and training through adaptive AI — guiding employees intelligently, anywhere in the world.

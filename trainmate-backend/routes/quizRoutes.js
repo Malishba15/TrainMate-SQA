@@ -1,3 +1,4 @@
+//trainmate-backend/routes/quizRoutes.js
 import express from "express";
 import {
     generateQuiz,
