@@ -10,7 +10,7 @@ const firestoreMock = jest.fn(() => ({
   collection: collectionMock,
 }));
 
-jest.unstable_mockModule("../config/firebase.js", () => ({
+jest.unstable_mockModule("../../config/firebase.js", () => ({
   admin: {
     firestore: firestoreMock,
   },
@@ -18,7 +18,7 @@ jest.unstable_mockModule("../config/firebase.js", () => ({
 }));
 
 const { getTotalCompanies } = await import(
-  "../controllers/company-specific/totalcompaniesController.js"
+  "../../controllers/company-specific/totalcompaniesController.js"
 );
 
 describe("getTotalCompanies", () => {

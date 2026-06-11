@@ -1,4 +1,4 @@
-import { isDocAllowed } from "../utils/relevanceGuard.js";
+import { isDocAllowed } from "../../utils/relevanceGuard.js";
 
 describe("isDocAllowed", () => {
   test("returns false when departments do not match", () => {

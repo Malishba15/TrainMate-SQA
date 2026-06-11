@@ -1,4 +1,4 @@
-import { chunkText } from "../utils/chunkText.js";
+import { chunkText } from "../../utils/chunkText.js";
 
 describe("chunkText", () => {
   test("returns one chunk for short text", () => {

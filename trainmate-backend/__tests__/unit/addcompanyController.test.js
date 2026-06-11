@@ -13,7 +13,7 @@ const collectionMock = jest.fn(() => ({
 
 const sendCompanyCredentialsEmailMock = jest.fn();
 
-jest.unstable_mockModule("../config/firebase.js", () => ({
+jest.unstable_mockModule("../../config/firebase.js", () => ({
   db: {
     collection: collectionMock,
   },
@@ -24,12 +24,12 @@ jest.unstable_mockModule("../config/firebase.js", () => ({
   },
 }));
 
-jest.unstable_mockModule("../services/emailService.js", () => ({
+jest.unstable_mockModule("../../services/emailService.js", () => ({
   sendCompanyCredentialsEmail: sendCompanyCredentialsEmailMock,
 }));
 
 const { addCompany } = await import(
-  "../controllers/company-specific/addcompanyController.js"
+  "../../controllers/company-specific/addcompanyController.js"
 );
 
 describe("addCompany", () => {

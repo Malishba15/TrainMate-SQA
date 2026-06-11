@@ -31,19 +31,19 @@ describe("firebase.js", () => {
   });
 
   test("initializes firebase with default credentials when service account missing", async () => {
-    await import("../config/firebase.js");
+    await import("../../config/firebase.js");
 
     expect(initializeAppMock).toHaveBeenCalled();
   });
 
   test("exports firestore instance", async () => {
-    const module = await import("../config/firebase.js");
+    const module = await import("../../config/firebase.js");
 
     expect(module.db).toBeDefined();
   });
 
   test("exports admin object", async () => {
-    const module = await import("../config/firebase.js");
+    const module = await import("../../config/firebase.js");
 
     expect(module.admin).toBeDefined();
   });

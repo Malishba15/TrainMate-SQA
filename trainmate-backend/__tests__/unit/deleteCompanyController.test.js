@@ -9,7 +9,7 @@ const mockDepartmentsGet = jest.fn();
 const mockDeleteUser = jest.fn();
 const mockListUsers = jest.fn();
 
-jest.unstable_mockModule("../config/firebase.js", () => ({
+jest.unstable_mockModule("../../config/firebase.js", () => ({
   db: {
     collection: jest.fn((name) => {
       if (name === "companies") {
@@ -52,7 +52,7 @@ jest.unstable_mockModule("../config/firebase.js", () => ({
 }));
 
 const { deleteCompany } = await import(
-  "../controllers/company-specific/deletecompanyController.js"
+  "../../controllers/company-specific/deletecompanyController.js"
 );
 
 // ---------------- TESTS ----------------

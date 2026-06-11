@@ -3,16 +3,16 @@ import { jest } from "@jest/globals";
 const pdfMock = jest.fn();
 const emailMock = jest.fn();
 
-jest.unstable_mockModule("../services/pdfService.js", () => ({
+jest.unstable_mockModule("../../services/pdfService.js", () => ({
   generateUserCredentialsPDF: pdfMock,
 }));
 
-jest.unstable_mockModule("../services/emailService.js", () => ({
+jest.unstable_mockModule("../../services/emailService.js", () => ({
   sendUserCredentialsEmail: emailMock,
 }));
 
 const { sendUserCredentials } = await import(
-  "../controllers/company-specific/sendCredentialsController.js"
+  "../../controllers/company-specific/sendCredentialsController.js"
 );
 
 describe("sendUserCredentials", () => {

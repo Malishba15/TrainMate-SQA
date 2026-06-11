@@ -1,6 +1,6 @@
-import { getModuleStatus } from "../utils/status.util.js";
-import { chunkText } from "../utils/chunkText.js";
-import { isDocAllowed } from "../utils/relevanceGuard.js";
+import { getModuleStatus } from "../../utils/status.util.js";
+import { chunkText } from "../../utils/chunkText.js";
+import { isDocAllowed } from "../../utils/relevanceGuard.js";
 
 describe("Negative and Edge Case Tests", () => {
   test("getModuleStatus handles empty object", () => {

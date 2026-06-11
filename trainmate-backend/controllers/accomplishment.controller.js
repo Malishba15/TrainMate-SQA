@@ -1,5 +1,5 @@
 // controllers/accomplishment.controller.js
-import { db } from "../config/firebase.js";
+import { db } from "../../config/firebase.js";
 import { getModuleStatus } from "../utils/status.util.js";
 import { generateAccomplishmentText } from "../services/gemini.service.js";
 

@@ -1,5 +1,5 @@
 // trainmate-backend/controllers/roadmap.controller.js
-import { db } from "../config/firebase.js";
+import { db } from "../../config/firebase.js";
 import { parseCvFromUrl } from "../services/cvParser.service.js";
 import { retrieveDeptDocsFromPinecone } from "../services/pineconeService.js";
 import { generateRoadmap } from "../services/llmService.js";

@@ -17,7 +17,7 @@ describe("cohere.js", () => {
   test("throws error when COHERE_API_KEY missing", async () => {
     delete process.env.COHERE_API_KEY;
 
-    const { getCohereClient } = await import("../config/cohere.js");
+    const { getCohereClient } = await import("../../config/cohere.js");
 
     expect(() => getCohereClient()).toThrow(
       "COHERE_API_KEY missing in .env"
@@ -27,7 +27,7 @@ describe("cohere.js", () => {
   test("creates client successfully", async () => {
     process.env.COHERE_API_KEY = "fake-token";
 
-    const { getCohereClient } = await import("../config/cohere.js");
+    const { getCohereClient } = await import("../../config/cohere.js");
 
     const client = getCohereClient();
 
@@ -41,7 +41,7 @@ describe("cohere.js", () => {
   test("returns cached client", async () => {
     process.env.COHERE_API_KEY = "fake-token";
 
-    const { getCohereClient } = await import("../config/cohere.js");
+    const { getCohereClient } = await import("../../config/cohere.js");
 
     const c1 = getCohereClient();
     const c2 = getCohereClient();

@@ -10,7 +10,7 @@ const firestoreMock = jest.fn(() => ({
   collection: collectionMock,
 }));
 
-jest.unstable_mockModule("../config/firebase.js", () => ({
+jest.unstable_mockModule("../../config/firebase.js", () => ({
   admin: {
     firestore: firestoreMock,
   },
@@ -18,7 +18,7 @@ jest.unstable_mockModule("../config/firebase.js", () => ({
 }));
 
 const { getTotalSuperAdmins } = await import(
-  "../controllers/superadmin/totalsuperAdminsController.js"
+  "../../controllers/superadmin/totalsuperAdminsController.js"
 );
 
 describe("getTotalSuperAdmins", () => {

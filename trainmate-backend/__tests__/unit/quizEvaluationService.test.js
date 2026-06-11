@@ -1,8 +1,8 @@
 import { jest } from "@jest/globals";
-import { submitQuiz } from "../controllers/quizController.js";
+import { submitQuiz } from "../../controllers/quizController.js";
 
 // Mock Firebase
-jest.mock("../config/firebase.js", () => ({
+jest.mock("../../config/firebase.js", () => ({
   db: {
     collection: jest.fn(),
   },

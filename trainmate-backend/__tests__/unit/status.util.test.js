@@ -1,4 +1,4 @@
-import { getModuleStatus } from "../utils/status.util.js";
+import { getModuleStatus } from "../../utils/status.util.js";
 
 describe("getModuleStatus", () => {
   test("returns 'Completed' when module is completed", () => {

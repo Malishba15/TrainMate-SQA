@@ -22,7 +22,7 @@ jest.unstable_mockModule("firebase-admin", () => ({
 }));
 
 const { getCompanyUsers } = await import(
-  "../controllers/company-specific/deleteuserController.js"
+  "../../controllers/company-specific/deleteuserController.js"
 );
 
 describe("getCompanyUsers", () => {

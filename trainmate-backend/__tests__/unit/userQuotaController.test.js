@@ -2,12 +2,12 @@ import { jest } from "@jest/globals";
 
 const checkUserQuotaMock = jest.fn();
 
-jest.unstable_mockModule("../utils/userQuotaChecker.js", () => ({
+jest.unstable_mockModule("../../utils/userQuotaChecker.js", () => ({
   checkUserQuota: checkUserQuotaMock,
 }));
 
 const { checkCompanyUserQuota } = await import(
-  "../controllers/company-specific/userQuotaController.js"
+  "../../controllers/company-specific/userQuotaController.js"
 );
 
 describe("checkCompanyUserQuota", () => {

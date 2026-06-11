@@ -1,5 +1,5 @@
 // trainmate-backend/controllers/companyFresherChatController.js
-import { db } from "../config/firebase.js";
+import { db } from "../../config/firebase.js";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import dotenv from "dotenv";
 import { queueAgentRunIncrement } from "../services/agentHealthStorage.service.js";

@@ -10,7 +10,7 @@ const collectionMock = jest.fn(() => ({
   doc: docMock,
 }));
 
-jest.unstable_mockModule("../config/firebase.js", () => ({
+jest.unstable_mockModule("../../config/firebase.js", () => ({
   db: {
     collection: collectionMock,
   },
@@ -18,7 +18,7 @@ jest.unstable_mockModule("../config/firebase.js", () => ({
 }));
 
 const { toggleCompanyStatus } = await import(
-  "../controllers/company-specific/togglecompanyController.js"
+  "../../controllers/company-specific/togglecompanyController.js"
 );
 
 describe("toggleCompanyStatus", () => {

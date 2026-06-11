@@ -10,7 +10,7 @@ const collectionMock = jest.fn(() => ({
 
 const updateUserMock = jest.fn();
 
-jest.unstable_mockModule("../config/firebase.js", () => ({
+jest.unstable_mockModule("../../config/firebase.js", () => ({
   db: {
     collection: collectionMock,
   },
@@ -22,7 +22,7 @@ jest.unstable_mockModule("../config/firebase.js", () => ({
 }));
 
 const { updateCompany } = await import(
-  "../controllers/company-specific/updateCompanyController.js"
+  "../../controllers/company-specific/updateCompanyController.js"
 );
 
 describe("updateCompany", () => {

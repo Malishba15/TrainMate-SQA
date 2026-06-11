@@ -10,23 +10,23 @@ const mockSendAdminRegeneratedRoadmapEmail = jest.fn();
 const mockSendAdminGrantedAttemptsEmail = jest.fn();
 const mockSendCompanyLicenseRenewalAlertEmail = jest.fn();
 
-await jest.unstable_mockModule("../controllers/googleAuthController.js", () => ({
+await jest.unstable_mockModule("../../controllers/googleAuthController.js", () => ({
   googleOAuthCallback: mockGoogleOAuthCallback,
   generateCompanyGoogleAuthUrl: mockGenerateCompanyGoogleAuthUrl,
   companyGoogleOAuthCallback: mockCompanyGoogleOAuthCallback,
 }));
 
-await jest.unstable_mockModule("../controllers/aiInsightsController.js", () => ({
+await jest.unstable_mockModule("../../controllers/aiInsightsController.js", () => ({
   getLearnerInsights: mockGetLearnerInsights,
 }));
 
-await jest.unstable_mockModule("../services/emailService.js", () => ({
+await jest.unstable_mockModule("../../services/emailService.js", () => ({
   sendAdminRegeneratedRoadmapEmail: mockSendAdminRegeneratedRoadmapEmail,
   sendAdminGrantedAttemptsEmail: mockSendAdminGrantedAttemptsEmail,
   sendCompanyLicenseRenewalAlertEmail: mockSendCompanyLicenseRenewalAlertEmail,
 }));
 
-await jest.unstable_mockModule("../config/firebase.js", () => ({
+await jest.unstable_mockModule("../../config/firebase.js", () => ({
   db: {
     collection: () => ({
       doc: () => ({
@@ -38,9 +38,9 @@ await jest.unstable_mockModule("../config/firebase.js", () => ({
 
 const [{ default: authRoutes }, { default: aiInsightsRoutes }, { default: emailRoutes }] =
   await Promise.all([
-    import("../routes/authRoutes.js"),
-    import("../routes/aiInsightsRoutes.js"),
-    import("../routes/emailRoutes.js"),
+    import("../../routes/authRoutes.js"),
+    import("../../routes/aiInsightsRoutes.js"),
+    import("../../routes/emailRoutes.js"),
   ]);
 
 function buildTestApp() {

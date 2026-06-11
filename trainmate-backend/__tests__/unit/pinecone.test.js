@@ -21,7 +21,7 @@ describe("pinecone.js", () => {
   test("returns null when API key is missing", async () => {
     delete process.env.PINECONE_API_KEY;
 
-    const { initPinecone } = await import("../config/pinecone.js");
+    const { initPinecone } = await import("../../config/pinecone.js");
 
     const result = await initPinecone();
 
@@ -35,7 +35,7 @@ describe("pinecone.js", () => {
       indexes: [],
     });
 
-    const { initPinecone } = await import("../config/pinecone.js");
+    const { initPinecone } = await import("../../config/pinecone.js");
 
     const result = await initPinecone();
 
@@ -50,7 +50,7 @@ describe("pinecone.js", () => {
       indexes: [{ name: "train-mate15" }],
     });
 
-    const { initPinecone } = await import("../config/pinecone.js");
+    const { initPinecone } = await import("../../config/pinecone.js");
 
     const result = await initPinecone();
 
@@ -65,7 +65,7 @@ describe("pinecone.js", () => {
       new Error("Pinecone failed")
     );
 
-    const { initPinecone } = await import("../config/pinecone.js");
+    const { initPinecone } = await import("../../config/pinecone.js");
 
     const result = await initPinecone();
 
