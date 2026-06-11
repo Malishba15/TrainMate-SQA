@@ -1,3 +1,4 @@
+//trainmate-backend/app.js
 import dotenv from "dotenv";
 dotenv.config();
 

@@ -1,4 +1,4 @@
-// addcompanyController.js
+//trainmate-backend/controllers/company-specific/addcompanyController.js
 import { db, admin } from "../../config/firebase.js";
 import { sendCompanyCredentialsEmail } from "../../services/emailService.js";
 

@@ -3636,3 +3636,11 @@ export const testFirestoreWrite = async (req, res) => {
 		return res.status(500).json({ error: "Firestore test failed", details: err.message });
 	}
 };
+
+export {
+  normalizeDepartmentKey,
+  normalizeLicensePlan,
+  calculateQuizUnlockTime,
+  checkQuizTimeUnlock,
+  isQuizComplete,
+};

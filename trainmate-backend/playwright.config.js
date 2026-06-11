@@ -1,3 +1,4 @@
+// playwright.config.js
 import { defineConfig } from "@playwright/test";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -5,8 +6,9 @@ import { fileURLToPath } from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+
 export default defineConfig({
-  testDir: path.join(__dirname, "tests", "e2e"),
+  testDir: path.join(__dirname, "__tests__", "e2e"),
   timeout: 30000,
   expect: {
     timeout: 10000,
@@ -22,11 +24,12 @@ export default defineConfig({
     trace: "on-first-retry",
     screenshot: "only-on-failure",
   },
-  webServer: {
-    command: "npm start",
-    cwd: path.join(__dirname, "..", "frontend"),
-    url: "http://127.0.0.1:3000",
-    reuseExistingServer: true,
-    timeout: 120000,
-  },
+//   webServer: {
+//   command: "npm start",
+//   cwd: path.join(__dirname, "..", "frontend"),
+//   url: "http://localhost:3000",
+//   reuseExistingServer: true,
+//   timeout: 120000,
+// },
 });
+

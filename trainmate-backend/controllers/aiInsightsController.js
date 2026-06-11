@@ -1,5 +1,5 @@
 // trainmate-backend/controllers/aiInsightsController.js
-import { aiGetLearnerInsights } from "../../services/aiAgenticNotificationService.js";
+import { aiGetLearnerInsights } from "../services/aiAgenticNotificationService.js";
 
 /**
  * Get AI-generated insights about learner's progress

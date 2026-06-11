@@ -1,5 +1,5 @@
 // trainmate-backend/controllers/roadmap.controller.js
-import { db } from "../../config/firebase.js";
+import { db } from "../config/firebase.js";
 import { parseCvFromUrl } from "../services/cvParser.service.js";
 import { retrieveDeptDocsFromPinecone } from "../services/pineconeService.js";
 import { generateRoadmap } from "../services/llmService.js";
@@ -8,7 +8,7 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { generateRoadmapPDF } from "../services/pdfService.js";
 import { handleRoadmapGenerated } from "../services/notificationService.js";
 
-const MAX_QUIZ_ATTEMPTS = 3; // Must match QuizController.js
+const MAX_QUIZ_ATTEMPTS = 3; 
 
 let roadmapModel = null;
 

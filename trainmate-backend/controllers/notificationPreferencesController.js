@@ -1,5 +1,5 @@
 // trainmate-backend/controllers/notificationPreferencesController.js
-import { db } from "../../config/firebase.js";
+import { db } from "../config/firebase.js";
 
 /**
  * Get user notification preferences

@@ -1,5 +1,5 @@
 //trainmate-backend/controllers/chatController.js
-import { db } from "../../config/firebase.js"; // Admin SDK
+import { db } from "../config/firebase.js"; // Admin SDK
 import admin from "firebase-admin";
 import { getPineconeIndex } from "../config/pinecone.js";
 import { retrieveDeptDocsFromPinecone } from "../services/pineconeService.js";

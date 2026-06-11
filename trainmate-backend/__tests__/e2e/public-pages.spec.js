@@ -1,3 +1,4 @@
+// __tests__/e2e/public-pages.spec.js
 import { test, expect } from "@playwright/test";
 
 test.describe("TrainMate public user flows", () => {

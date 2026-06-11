@@ -5,7 +5,7 @@
  * All complex workflows handled by orchestrator + agents
  */
 
-import { db } from '../../config/firebase.js';
+import { db } from '../config/firebase.js';
 import { parseCvFromUrl } from '../services/cvParser.service.js';
 import { orchestrator } from '../services/agentOrchestrator.service.js';
 import { initializeAgentRegistry } from '../services/agentRegistry.js';
